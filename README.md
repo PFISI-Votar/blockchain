@@ -35,14 +35,23 @@ npx hardhat coverage     # cobertura
 
 ### Deploy a Sepolia
 
-1. Copiar `.env.example` a `.env` y completar `SEPOLIA_RPC_URL`, `PRIVATE_KEY` y `ADMIN_MULTISIG_ADDRESS` (la Multisig/Governor que recibirá `DEFAULT_ADMIN_ROLE`).
+1. Copiar `.env.example` a `.env` y completar `SEPOLIA_RPC_URL`, `PRIVATE_KEY`, `ADMIN_MULTISIG_ADDRESS` y (para UAT on-chain) `ADMIN_PRIVATE_KEY`.
 2. Ejecutar:
 
 ```bash
-npx hardhat run scripts/deploy.ts --network sepolia
+npm run deploy:sepolia
+npx hardhat run scripts/sepolia-uat.ts --network sepolia
 ```
 
-> **No commitear** `.env` ni claves. La dirección del contrato desplegado debe documentarse aquí una vez en Sepolia.
+### Despliegue documentado (US-349)
+
+| Red | Contrato | Admin (`DEFAULT_ADMIN_ROLE`) |
+|-----|----------|------------------------------|
+| Sepolia | [`0x55d1d115309872C16B9646362C82fFa246F3F652`](https://sepolia.etherscan.io/address/0x55d1d115309872C16B9646362C82fFa246F3F652) | `0x4852CB3d2acA0fDD4677a3e6dD1C2f3AcEFD6928` |
+
+Evidencia completa de UAT en testnet: [`docs/US-349-sepolia-uat.md`](docs/US-349-sepolia-uat.md).
+
+> **No commitear** `.env` ni claves privadas.
 
 ## Pruebas de usuario (UAT)
 
@@ -54,3 +63,7 @@ Cubiertas en `test/VotarAccessControl.test.ts`:
 | UAT-02 | Gestión de admin: cuenta sin admin no puede otorgar `BALLOT_ROLE`. |
 | UAT-03 | Auditoría: `RoleGranted(role, account, sender)` emitido al otorgar. |
 | UAT-04 | Auto-revocación: `renounceRole` permite a la cuenta quitarse su propio rol. |
+
+### UAT en Sepolia (testnet)
+
+Ver [`docs/US-349-sepolia-uat.md`](docs/US-349-sepolia-uat.md). Script: `scripts/sepolia-uat.ts`.
