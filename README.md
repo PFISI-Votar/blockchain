@@ -34,6 +34,34 @@ npx hardhat test         # ejecutar suite (UAT-01..04)
 npx hardhat coverage     # cobertura
 ```
 
+### Desarrollo local
+
+Desde `blockchain/`:
+
+```bash
+npm run dev
+```
+
+Esto levanta Hardhat node en `http://127.0.0.1:8545`, compila y despliega `MerkleRootStore`, otorga `MERKLE_UPDATER_ROLE` a la cuenta del backend y escribe automáticamente `../back/.env.blockchain.local` (direcciones, RPC y claves de las cuentas Hardhat por defecto). No hace falta configurar variables de entorno manualmente.
+
+Luego, en otra terminal: `npm run dev` en `back/`.
+
+Si reiniciás Hardhat node, volvé a correr `npm run dev` en este repo para redeployar.
+
+Comandos puntuales:
+
+```bash
+npm run node          # solo Hardhat node (sin deploy)
+npm run deploy:local  # deploy contra un nodo ya corriendo
+```
+
+Cuentas Hardhat por defecto en local:
+
+| Índice | Rol |
+|--------|-----|
+| #0 | `DEFAULT_ADMIN_ROLE` |
+| #1 | `MERKLE_UPDATER_ROLE` (wallet del backend) |
+
 ### Deploy a Sepolia
 
 1. Copiar `.env.example` a `.env` y completar `SEPOLIA_RPC_URL`, `PRIVATE_KEY`, `ADMIN_MULTISIG_ADDRESS` y (para UAT on-chain) `ADMIN_PRIVATE_KEY`.
