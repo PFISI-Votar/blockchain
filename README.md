@@ -19,6 +19,7 @@ Base de seguridad del sistema: control de acceso basado en roles (RBAC) con prin
 
 - `contracts/access/VotarAccessControl.sol` — **base abstracta** (`AccessControl` + `Pausable`). Define los roles, el constructor que asigna `DEFAULT_ADMIN_ROLE` al admin Multisig, y `pause()/unpause()` guardados por `PAUSER_ROLE`. Los contratos del ecosistema (BallotContract, MerkleRootRegistry, ElectionFactory, …) la heredan.
 - `contracts/mocks/AccessControlHarness.sol` — contrato concreto de prueba. Añade una función crítica por rol (`updateMerkleRoot`, `recordBallotOp`) para validar el aislamiento de operaciones.
+- `contracts/merkle/MerkleRootStore.sol` — almacén de Merkle roots por `electionId` (US-335). Emite `RootPublished`; `publishRoot` requiere `MERKLE_UPDATER_ROLE`.
 
 ### Auditabilidad
 
@@ -41,6 +42,10 @@ npx hardhat coverage     # cobertura
 ```bash
 npm run deploy:sepolia
 npx hardhat run scripts/sepolia-uat.ts --network sepolia
+
+# US-335 — MerkleRootStore
+npm run deploy:merkle-store:sepolia
+npm run uat:335:sepolia
 ```
 
 ### Despliegue documentado (US-349)
