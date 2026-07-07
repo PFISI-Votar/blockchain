@@ -40,8 +40,8 @@ contract BallotContract is VotarAccessControl {
         bytes32 voterLeaf,
         bytes32[] calldata merkleProof
     ) external whenNotPaused {
-        (bytes32 root,) = merkleRootStore.getMerkleRoot(electionId);
-        if (root == bytes32(0)) revert MerkleRootNotPublished(electionId);
+        (bytes32 root, uint256 publishedAt) = merkleRootStore.getMerkleRoot(electionId);
+        if (root == bytes32(0) || publishedAt == 0) revert MerkleRootNotPublished(electionId);
 
         bytes32 leaf = _standardLeafHash(voterLeaf);
         if (!MerkleProof.verify(merkleProof, root, leaf)) {
