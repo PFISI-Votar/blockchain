@@ -10,9 +10,7 @@ const blockchainRoot = resolve(__dirname, '..');
 const HARDHAT_RPC_HOST = '127.0.0.1';
 const HARDHAT_RPC_PORT = 8545;
 
-// Fix cross-platform: en Windows los binarios son .cmd y requieren shell: true
-//Funciona para windows, mac y linux.
-// Fix cross-platform: en Windows usar shell: true
+// En Windows los binarios npm/npx son .cmd y requieren shell: true; en Linux/Mac no.
 const isWindows = process.platform === 'win32';
 const spawnOpts = (extra = {}) => ({
   cwd: blockchainRoot,
