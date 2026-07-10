@@ -53,3 +53,6 @@ Thumbs.db
 # Temporary files
 .temp/
 .tmp/
+
+# Docker 
+Dockerfile

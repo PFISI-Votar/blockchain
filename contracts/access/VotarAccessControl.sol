@@ -30,6 +30,9 @@ abstract contract VotarAccessControl is AccessControl, Pausable {
     /// @notice Role allowed to execute ballot operations (vote recording).
     bytes32 public constant BALLOT_ROLE = keccak256("BALLOT_ROLE");
 
+    /// @notice Role allowed to manage election lifecycle (state transitions).
+    bytes32 public constant ELECTION_ADMIN_ROLE = keccak256("ELECTION_ADMIN_ROLE");
+
     error AdminIsZeroAddress();
 
     /**
