@@ -35,10 +35,15 @@ async function main() {
 
   const [admin, merkleUpdater] = await ethers.getSigners();
 
-  const factory = await ethers.getContractFactory("MerkleRootStore");
-  const contract = await factory.deploy(admin.address);
+  const storeFactory = await ethers.getContractFactory("MerkleRootStore");
+  const contract = await storeFactory.deploy(admin.address);
   await contract.waitForDeployment();
   const contractAddress = await contract.getAddress();
+
+  const ballotFactory = await ethers.getContractFactory("BallotContract");
+  const ballot = await ballotFactory.deploy(admin.address, contractAddress);
+  await ballot.waitForDeployment();
+  const ballotAddress = await ballot.getAddress();
 
   const merkleUpdaterRole = await contract.MERKLE_UPDATER_ROLE();
   const hasRole = await contract.hasRole(
@@ -60,12 +65,14 @@ async function main() {
   writeBackendEnv({
     SEPOLIA_RPC_URL: "http://127.0.0.1:8545",
     MERKLE_ROOT_STORE_ADDRESS: contractAddress,
+    BALLOT_CONTRACT_ADDRESS: ballotAddress,
     MERKLE_UPDATER_PRIVATE_KEY: HARDHAT_ACCOUNT_1_PRIVATE_KEY,
     CHAIN_ID: chainId,
     ETHERSCAN_BASE_URL: "http://localhost",
   });
 
   console.log(`[deploy-local] MerkleRootStore: ${contractAddress}`);
+  console.log(`[deploy-local] BallotContract:  ${ballotAddress}`);
   console.log(`[deploy-local] DEFAULT_ADMIN_ROLE: ${admin.address}`);
   console.log(`[deploy-local] MERKLE_UPDATER_ROLE: ${merkleUpdater.address}`);
   console.log(`[deploy-local] chainId: ${chainId}`);
