@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.24;
 
 import {VotarAccessControl} from "../access/VotarAccessControl.sol";
 import {MerkleRootStore} from "../merkle/MerkleRootStore.sol";
@@ -12,8 +12,13 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  * @notice Validates voter eligibility on-chain via Merkle proof against the
  *         root anchored in {MerkleRootStore} before accepting a vote intention.
  * @dev US-339 — Cryptographic validation of voters on the blockchain.
- *      VOTAR-357 — EIP-712 signed ballot with domain separator and nullifier replay protection.
- *      Leaf encoding matches backend StandardMerkleTree (['bytes32']).
+ *      VOTAR-357 — EIP-712 signed ballot with domain separator and nullifier
+ *      replay protection. Leaf encoding matches backend StandardMerkleTree (['bytes32']).
+ *
+ *      The nullifier value is produced off-chain by VOTAR-353 and included in the
+ *      signed Vote struct; this contract only verifies the EIP-712 signature and
+ *      rejects reuse (UAT-03). It does NOT derive or validate nullifier semantics.
+ *      LAST_VOTE_WINS overwrite requires VoteRegistry (future US).
  */
 contract BallotContract is VotarAccessControl, EIP712 {
     MerkleRootStore public immutable merkleRootStore;
@@ -72,7 +77,7 @@ contract BallotContract is VotarAccessControl, EIP712 {
      * @param electionId Off-chain election identifier (id_eleccion).
      * @param voterLeaf Keccak-256 hash of the voter identity (hash_hoja / PADRON_VOTANTE).
      * @param merkleProof Sibling hashes from the StandardMerkleTree proof path.
-     * @param nullifier Anonymous per-election identifier derived from the ephemeral public key.
+     * @param nullifier Anonymous per-election identifier produced off-chain (VOTAR-353).
      * @param selectionHash Hash of the selected ballot content.
      * @param timestamp Unix timestamp captured at signing time on the client.
      * @param expectedSigner Ethereum address derived from the ephemeral session key.

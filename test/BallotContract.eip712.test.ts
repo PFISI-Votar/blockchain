@@ -19,14 +19,30 @@ const VOTE_TYPE = {
   ],
 };
 
+/**
+ * Mirrors front `computeSelectionHash`: keccak256(JSON.stringify(normalizedPayload)).
+ */
+function computeSelectionHash(payload: {
+  votoEnBlanco?: boolean;
+  votoNulo?: boolean;
+  selecciones: Array<{ idCategoria: number; idCandidato: number }>;
+}): string {
+  const normalized = {
+    votoEnBlanco: payload.votoEnBlanco === true,
+    votoNulo: payload.votoNulo === true,
+    selecciones: [...payload.selecciones].sort(
+      (a, b) => a.idCategoria - b.idCategoria || a.idCandidato - b.idCandidato,
+    ),
+  };
+  return ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(normalized)));
+}
+
 describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
   const ELECTION_ID = 357n;
   const VOTER_DNI = "30222333";
   const VOTER_EMAIL = "bruno@frvm.utn.edu.ar";
   const VOTER_HASH = hashVotante(VOTER_DNI, VOTER_EMAIL);
   const VOTER_LEAF = toBytes32Hex(VOTER_HASH);
-  const SELECTION_HASH =
-    "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
   const TIMESTAMP = 1_700_000_000n;
 
   let store: MerkleRootStore;
@@ -37,6 +53,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
   let voter: HardhatEthersSigner;
   let validProof: string[];
   let nullifier: string;
+  let selectionHash: string;
 
   async function deployFixture() {
     const [admin, merkleUpdater, ephemeralSigner, voter] = await ethers.getSigners();
@@ -62,9 +79,16 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
 
     await store.connect(merkleUpdater).publishRoot(ELECTION_ID, merkleRoot);
 
-    const nullifier = ethers.keccak256(
-      ethers.solidityPacked(["address", "uint256"], [ephemeralSigner.address, ELECTION_ID]),
-    );
+    // Opaque nullifier as produced off-chain by VOTAR-353 (not derived here).
+    const nullifier =
+      "0x1111111111111111111111111111111111111111111111111111111111111111";
+
+    const selectionHash = computeSelectionHash({
+      selecciones: [
+        { idCategoria: 1, idCandidato: 101 },
+        { idCategoria: 2, idCandidato: 201 },
+      ],
+    });
 
     return {
       store,
@@ -75,6 +99,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
       voter,
       validProof,
       nullifier,
+      selectionHash,
     };
   }
 
@@ -97,7 +122,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
     const message = {
       electionId: overrides?.electionId ?? ELECTION_ID,
       nullifier: overrides?.nullifier ?? nullifier,
-      selectionHash: overrides?.selectionHash ?? SELECTION_HASH,
+      selectionHash: overrides?.selectionHash ?? selectionHash,
       timestamp: overrides?.timestamp ?? TIMESTAMP,
     };
 
@@ -114,6 +139,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
       voter,
       validProof,
       nullifier,
+      selectionHash,
     } = await loadFixture(deployFixture));
   });
 
@@ -159,7 +185,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
             VOTER_LEAF,
             validProof,
             nullifier,
-            SELECTION_HASH,
+            selectionHash,
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
@@ -174,7 +200,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
             VOTER_LEAF,
             validProof,
             nullifier,
-            SELECTION_HASH,
+            selectionHash,
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
@@ -195,20 +221,21 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
             VOTER_LEAF,
             validProof,
             nullifier,
-            SELECTION_HASH,
+            selectionHash,
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
           ),
       )
         .to.emit(ballot, "SignedVoteCast")
-        .withArgs(ELECTION_ID, VOTER_LEAF, nullifier, SELECTION_HASH, ephemeralSigner.address);
+        .withArgs(ELECTION_ID, VOTER_LEAF, nullifier, selectionHash, ephemeralSigner.address);
 
       expect(await ballot.hasVoted(ELECTION_ID, VOTER_LEAF)).to.equal(true);
       expect(await ballot.isNullifierUsed(ELECTION_ID, nullifier)).to.equal(true);
     });
 
-    it("reverts InvalidSignature when signer does not match expected ephemeral key", async () => {
+    it("reverts InvalidSignature when recovered signer does not match expectedSigner", async () => {
+      // Signature from ephemeral key, but expectedSigner claims to be voter.
       const signature = await signVote(ephemeralSigner);
 
       await expect(
@@ -219,12 +246,41 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
             VOTER_LEAF,
             validProof,
             nullifier,
-            SELECTION_HASH,
+            selectionHash,
             TIMESTAMP,
             voter.address,
             signature,
           ),
       ).to.be.revertedWithCustomError(ballot, "InvalidSignature");
+    });
+
+    it("accepts selectionHash produced with the same JSON canonicalization as the BUD", async () => {
+      const frontAlignedHash = computeSelectionHash({
+        votoEnBlanco: false,
+        votoNulo: false,
+        selecciones: [
+          { idCategoria: 2, idCandidato: 201 },
+          { idCategoria: 1, idCandidato: 101 },
+        ],
+      });
+      expect(frontAlignedHash).to.equal(selectionHash);
+
+      const signature = await signVote(ephemeralSigner, { selectionHash: frontAlignedHash });
+
+      await expect(
+        ballot
+          .connect(voter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            validProof,
+            nullifier,
+            frontAlignedHash,
+            TIMESTAMP,
+            ephemeralSigner.address,
+            signature,
+          ),
+      ).to.emit(ballot, "SignedVoteCast");
     });
   });
 });
