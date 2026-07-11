@@ -42,9 +42,12 @@ Desde `blockchain/`:
 npm run dev
 ```
 
-Esto levanta Hardhat node en `http://127.0.0.1:8545`, compila y despliega `MerkleRootStore`, otorga `MERKLE_UPDATER_ROLE` a la cuenta del backend y escribe automáticamente `../back/.env.blockchain.local` (direcciones, RPC y claves de las cuentas Hardhat por defecto). No hace falta configurar variables de entorno manualmente.
+Esto levanta Hardhat node en `http://127.0.0.1:8545`, compila y despliega `MerkleRootStore` + `BallotContract`, otorga `MERKLE_UPDATER_ROLE` a la cuenta del backend y escribe automáticamente:
 
-Luego, en otra terminal: `npm run dev` en `back/`.
+- `../back/.env.blockchain.local`
+- `../front/.env.local` (address del BallotContract + RPC)
+
+Luego, en otras terminales: `npm run dev` en `back/` y `front/` (reiniciá el front para cargar `.env.local`).
 
 Si reiniciás Hardhat node, volvé a correr `npm run dev` en este repo para redeployar.
 
