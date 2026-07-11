@@ -17,6 +17,9 @@ const config: HardhatUserConfig = {
   },
   networks: {
     hardhat: {},
+    localhost: {
+      url: "http://127.0.0.1:8545",
+    },
     // Sepolia only registers when secrets are present, so `compile`/`test`
     // work out of the box without a .env file.
     ...(SEPOLIA_RPC_URL && PRIVATE_KEY

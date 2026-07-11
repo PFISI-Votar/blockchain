@@ -46,7 +46,8 @@ const logReady = () => {
   console.log('\n[blockchain] Entorno local listo');
   console.log(`[blockchain]   RPC:     http://${HARDHAT_RPC_HOST}:${HARDHAT_RPC_PORT}`);
   console.log('[blockchain]   Backend: variables escritas en ../back/.env.blockchain.local');
-  console.log('[blockchain]   Siguiente paso: en otra terminal, corré npm run dev en back/');
+  console.log('[blockchain]   Front:   variables escritas en ../front/.env.local');
+  console.log('[blockchain]   Siguiente paso: en otra terminal, corré npm run dev en back/ y front/');
   console.log('[blockchain] Presioná Ctrl+C para detener Hardhat node\n');
 };
 
