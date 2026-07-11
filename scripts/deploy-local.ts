@@ -1,5 +1,5 @@
 import { ethers, network } from "hardhat";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 /**
@@ -28,6 +28,38 @@ const writeEnvFile = (
   }
   writeFileSync(filePath, lines.join("\n"), "utf8");
   console.log(`[deploy-local] Variables escritas en ${filePath}`);
+};
+
+/**
+ * Merges blockchain keys into an existing `.env.local` so vars like
+ * `VITE_API_URL` are preserved across redeploys.
+ */
+const mergeEnvFile = (
+  filePath: string,
+  values: Record<string, string | number>,
+  headerLines: string[],
+) => {
+  const existing: Record<string, string> = {};
+  if (existsSync(filePath)) {
+    for (const line of readFileSync(filePath, "utf8").split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) {
+        continue;
+      }
+      const separatorIndex = trimmed.indexOf("=");
+      if (separatorIndex <= 0) {
+        continue;
+      }
+      const key = trimmed.slice(0, separatorIndex);
+      const value = trimmed.slice(separatorIndex + 1);
+      existing[key] = value;
+    }
+  }
+  const merged: Record<string, string | number> = {
+    ...existing,
+    ...values,
+  };
+  writeEnvFile(filePath, merged, headerLines);
 };
 
 async function main() {
@@ -82,7 +114,7 @@ async function main() {
     ],
   );
 
-  writeEnvFile(
+  mergeEnvFile(
     FRONT_ENV_FILE,
     {
       VITE_RPC_URL: "http://127.0.0.1:8545",
@@ -94,7 +126,8 @@ async function main() {
     },
     [
       "# Generado automáticamente por blockchain/scripts/deploy-local.ts",
-      "# Vite carga este archivo (.env.local) automáticamente — no commitear.",
+      "# Mergea claves blockchain en .env.local sin borrar otras vars (ej. VITE_API_URL).",
+      "# Vite carga este archivo automáticamente — no commitear.",
       "# Reiniciá `npm run dev` en front/ después de un redeploy.",
     ],
   );
