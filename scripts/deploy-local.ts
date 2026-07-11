@@ -1,5 +1,5 @@
 import { ethers, network } from "hardhat";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 /**
@@ -10,20 +10,56 @@ const HARDHAT_ACCOUNT_1_PRIVATE_KEY =
   "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
 const BACK_ENV_FILE = resolve(__dirname, "../../back/.env.blockchain.local");
+const FRONT_ENV_FILE = resolve(__dirname, "../../front/.env.local");
 
-const writeBackendEnv = (values: Record<string, string | number>) => {
+const writeEnvFile = (
+  filePath: string,
+  values: Record<string, string | number>,
+  headerLines: string[],
+) => {
   const lines = [
-    "# Generado automáticamente por blockchain/scripts/deploy-local.ts",
-    "# No commitear — reiniciá `npm run dev` en blockchain/ si reiniciás Hardhat node.",
+    ...headerLines,
     ...Object.entries(values).map(([key, value]) => `${key}=${value}`),
     "",
   ];
-  const directory = dirname(BACK_ENV_FILE);
+  const directory = dirname(filePath);
   if (!existsSync(directory)) {
     mkdirSync(directory, { recursive: true });
   }
-  writeFileSync(BACK_ENV_FILE, lines.join("\n"), "utf8");
-  console.log(`[deploy-local] Variables escritas en ${BACK_ENV_FILE}`);
+  writeFileSync(filePath, lines.join("\n"), "utf8");
+  console.log(`[deploy-local] Variables escritas en ${filePath}`);
+};
+
+/**
+ * Merges blockchain keys into an existing `.env.local` so vars like
+ * `VITE_API_URL` are preserved across redeploys.
+ */
+const mergeEnvFile = (
+  filePath: string,
+  values: Record<string, string | number>,
+  headerLines: string[],
+) => {
+  const existing: Record<string, string> = {};
+  if (existsSync(filePath)) {
+    for (const line of readFileSync(filePath, "utf8").split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) {
+        continue;
+      }
+      const separatorIndex = trimmed.indexOf("=");
+      if (separatorIndex <= 0) {
+        continue;
+      }
+      const key = trimmed.slice(0, separatorIndex);
+      const value = trimmed.slice(separatorIndex + 1);
+      existing[key] = value;
+    }
+  }
+  const merged: Record<string, string | number> = {
+    ...existing,
+    ...values,
+  };
+  writeEnvFile(filePath, merged, headerLines);
 };
 
 async function main() {
@@ -62,14 +98,39 @@ async function main() {
 
   const chainId = Number((await ethers.provider.getNetwork()).chainId);
 
-  writeBackendEnv({
-    SEPOLIA_RPC_URL: "http://127.0.0.1:8545",
-    MERKLE_ROOT_STORE_ADDRESS: contractAddress,
-    BALLOT_CONTRACT_ADDRESS: ballotAddress,
-    MERKLE_UPDATER_PRIVATE_KEY: HARDHAT_ACCOUNT_1_PRIVATE_KEY,
-    CHAIN_ID: chainId,
-    ETHERSCAN_BASE_URL: "http://localhost",
-  });
+  writeEnvFile(
+    BACK_ENV_FILE,
+    {
+      SEPOLIA_RPC_URL: "http://127.0.0.1:8545",
+      MERKLE_ROOT_STORE_ADDRESS: contractAddress,
+      BALLOT_CONTRACT_ADDRESS: ballotAddress,
+      MERKLE_UPDATER_PRIVATE_KEY: HARDHAT_ACCOUNT_1_PRIVATE_KEY,
+      CHAIN_ID: chainId,
+      ETHERSCAN_BASE_URL: "http://localhost",
+    },
+    [
+      "# Generado automáticamente por blockchain/scripts/deploy-local.ts",
+      "# No commitear — reiniciá `npm run dev` en blockchain/ si reiniciás Hardhat node.",
+    ],
+  );
+
+  mergeEnvFile(
+    FRONT_ENV_FILE,
+    {
+      VITE_RPC_URL: "http://127.0.0.1:8545",
+      VITE_CHAIN_ID: chainId,
+      VITE_BALLOT_CONTRACT_ADDRESS: ballotAddress,
+      // Hardhat account #0 — pays gas for castSignedVote (local/testnet only)
+      VITE_VOTE_TRANSMITTER_PRIVATE_KEY:
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+    },
+    [
+      "# Generado automáticamente por blockchain/scripts/deploy-local.ts",
+      "# Mergea claves blockchain en .env.local sin borrar otras vars (ej. VITE_API_URL).",
+      "# Vite carga este archivo automáticamente — no commitear.",
+      "# Reiniciá `npm run dev` en front/ después de un redeploy.",
+    ],
+  );
 
   console.log(`[deploy-local] MerkleRootStore: ${contractAddress}`);
   console.log(`[deploy-local] BallotContract:  ${ballotAddress}`);
