@@ -67,6 +67,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
     await ballot.waitForDeployment();
 
     await store.connect(admin).grantRole(await store.MERKLE_UPDATER_ROLE(), merkleUpdater.address);
+    await store.connect(admin).grantRole(await store.ELECTION_ADMIN_ROLE(), admin.address);
 
     const hashes = [
       hashVotante("30111222", "ana@frvm.utn.edu.ar"),
@@ -78,6 +79,11 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
     const validProof = getMerkleProof(tree, voterLeafIndex);
 
     await store.connect(merkleUpdater).publishRoot(ELECTION_ID, merkleRoot);
+
+    // VOTAR-321: voting requires OPEN state and an active window.
+    const now = Math.floor(Date.now() / 1000);
+    await store.connect(admin).setElectionWindow(ELECTION_ID, now, now + 3600);
+    await store.connect(admin).setElectionState(ELECTION_ID, 2); // OPEN
 
     // Opaque nullifier as produced off-chain by VOTAR-353 (not derived here).
     const nullifier =
