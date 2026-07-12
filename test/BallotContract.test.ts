@@ -1,6 +1,9 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
+import {
+  loadFixture,
+  time,
+} from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { BallotContract, MerkleRootStore } from "../typechain-types";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import {
@@ -16,6 +19,13 @@ describe("BallotContract — US-339 UATs", () => {
   const VOTER_EMAIL = "bruno@frvm.utn.edu.ar";
   const VOTER_HASH = hashVotante(VOTER_DNI, VOTER_EMAIL);
   const VOTER_LEAF = toBytes32Hex(VOTER_HASH);
+  const ElectionState = {
+    DRAFT: 0,
+    CONFIGURED: 1,
+    OPEN: 2,
+    CLOSED: 3,
+    TALLIED: 4,
+  };
 
   let store: MerkleRootStore;
   let ballot: BallotContract;
@@ -26,6 +36,19 @@ describe("BallotContract — US-339 UATs", () => {
   let merkleRoot: string;
   let voterLeafIndex: number;
   let validProof: string[];
+
+  async function openElectionWindow(
+    store: MerkleRootStore,
+    admin: HardhatEthersSigner,
+    electionId: bigint,
+    durationSeconds = 3600,
+  ) {
+    const now = await time.latest();
+    await store
+      .connect(admin)
+      .setElectionWindow(electionId, now, now + durationSeconds);
+    await store.connect(admin).setElectionState(electionId, ElectionState.OPEN);
+  }
 
   async function deployFixture() {
     const [admin, merkleUpdater, voter, attacker] = await ethers.getSigners();
@@ -39,6 +62,7 @@ describe("BallotContract — US-339 UATs", () => {
     await ballot.waitForDeployment();
 
     await store.connect(admin).grantRole(await store.MERKLE_UPDATER_ROLE(), merkleUpdater.address);
+    await store.connect(admin).grantRole(await store.ELECTION_ADMIN_ROLE(), admin.address);
 
     const hashes = [
       hashVotante("30111222", "ana@frvm.utn.edu.ar"),
@@ -51,6 +75,7 @@ describe("BallotContract — US-339 UATs", () => {
     const validProof = getMerkleProof(tree, voterLeafIndex);
 
     await store.connect(merkleUpdater).publishRoot(ELECTION_ID, merkleRoot);
+    await openElectionWindow(store, admin, ELECTION_ID);
 
     return {
       store,
@@ -123,6 +148,7 @@ describe("BallotContract — US-339 UATs", () => {
   describe("validation rules", () => {
     it("reverts MerkleRootNotPublished when root is not anchored", async () => {
       const unpublishedElectionId = 999n;
+      await openElectionWindow(store, admin, unpublishedElectionId);
       await expect(
         ballot.connect(voter).castVote(unpublishedElectionId, VOTER_LEAF, validProof),
       )
@@ -142,6 +168,35 @@ describe("BallotContract — US-339 UATs", () => {
     it("reads the anchored root from MerkleRootStore", async () => {
       const [storedRoot] = await store.getMerkleRoot(ELECTION_ID);
       expect(storedRoot).to.equal(merkleRoot);
+    });
+  });
+
+  describe("VOTAR-321 — cierre on-chain ElectionClosed", () => {
+    it("reverts ElectionClosed when election state is CLOSED (manual close)", async () => {
+      await store.connect(admin).setElectionState(ELECTION_ID, ElectionState.CLOSED);
+
+      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
+        .to.be.revertedWithCustomError(ballot, "ElectionClosed")
+        .withArgs(ELECTION_ID);
+    });
+
+    it("reverts ElectionClosed autonomously when block.timestamp >= endTime", async () => {
+      const endTime = await store.getElectionEndTime(ELECTION_ID);
+      await time.increaseTo(endTime);
+
+      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
+        .to.be.revertedWithCustomError(ballot, "ElectionClosed")
+        .withArgs(ELECTION_ID);
+    });
+
+    it("reverts ElectionClosed when election is not OPEN", async () => {
+      await store
+        .connect(admin)
+        .setElectionState(ELECTION_ID, ElectionState.CONFIGURED);
+
+      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
+        .to.be.revertedWithCustomError(ballot, "ElectionClosed")
+        .withArgs(ELECTION_ID);
     });
   });
 });

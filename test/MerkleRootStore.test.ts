@@ -221,5 +221,29 @@ describe("MerkleRootStore — US-335 & US-336 UATs", () => {
         );
       });
     });
+
+    describe("setElectionWindow — VOTAR-321", () => {
+      it("stores and returns the voting window", async () => {
+        const startTime = 1_700_000_000n;
+        const endTime = 1_700_003_600n;
+
+        await expect(
+          store.connect(admin).setElectionWindow(ELECTION_ID, startTime, endTime),
+        )
+          .to.emit(store, "ElectionWindowSet")
+          .withArgs(ELECTION_ID, startTime, endTime);
+
+        expect(await store.getElectionEndTime(ELECTION_ID)).to.equal(endTime);
+        const [storedStart, storedEnd] = await store.getElectionWindow(ELECTION_ID);
+        expect(storedStart).to.equal(startTime);
+        expect(storedEnd).to.equal(endTime);
+      });
+
+      it("reverts InvalidElectionWindow when endTime <= startTime", async () => {
+        await expect(
+          store.connect(admin).setElectionWindow(ELECTION_ID, 100n, 100n),
+        ).to.be.revertedWithCustomError(store, "InvalidElectionWindow");
+      });
+    });
   });
 });

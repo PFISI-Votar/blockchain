@@ -14,6 +14,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  * @dev US-339 — Cryptographic validation of voters on the blockchain.
  *      VOTAR-357 — EIP-712 signed ballot with domain separator and nullifier
  *      replay protection. Leaf encoding matches backend StandardMerkleTree (['bytes32']).
+ *      VOTAR-321 — Rejects votes when election is CLOSED or past endTime (`ElectionClosed`).
  *
  *      The nullifier value is produced off-chain by VOTAR-353 and included in the
  *      signed Vote struct; this contract only verifies the EIP-712 signature and
@@ -43,6 +44,8 @@ contract BallotContract is VotarAccessControl, EIP712 {
     error MerkleRootStoreIsZeroAddress();
     error NullifierAlreadyUsed(bytes32 nullifier);
     error InvalidSignature();
+    /// @notice Thrown when the election is CLOSED/TALLIED or `block.timestamp` >= endTime.
+    error ElectionClosed(uint256 electionId);
 
     mapping(uint256 electionId => mapping(bytes32 voterLeaf => bool hasVoted)) private _hasVoted;
     mapping(uint256 electionId => mapping(bytes32 nullifier => bool used)) private _nullifierUsed;
@@ -61,11 +64,8 @@ contract BallotContract is VotarAccessControl, EIP712 {
      * @param voterLeaf Keccak-256 hash of the voter identity (hash_hoja / PADRON_VOTANTE).
      * @param merkleProof Sibling hashes from the StandardMerkleTree proof path.
      */
-    function castVote(
-        uint256 electionId,
-        bytes32 voterLeaf,
-        bytes32[] calldata merkleProof
-    ) external whenNotPaused {
+    function castVote(uint256 electionId, bytes32 voterLeaf, bytes32[] calldata merkleProof) external whenNotPaused {
+        _assertElectionAcceptingVotes(electionId);
         _assertValidMerkleProof(electionId, voterLeaf, merkleProof);
 
         _hasVoted[electionId][voterLeaf] = true;
@@ -93,15 +93,14 @@ contract BallotContract is VotarAccessControl, EIP712 {
         address expectedSigner,
         bytes calldata signature
     ) external whenNotPaused {
+        _assertElectionAcceptingVotes(electionId);
         _assertValidMerkleProof(electionId, voterLeaf, merkleProof);
 
         if (_nullifierUsed[electionId][nullifier]) {
             revert NullifierAlreadyUsed(nullifier);
         }
 
-        bytes32 structHash = keccak256(
-            abi.encode(VOTE_TYPEHASH, electionId, nullifier, selectionHash, timestamp)
-        );
+        bytes32 structHash = keccak256(abi.encode(VOTE_TYPEHASH, electionId, nullifier, selectionHash, timestamp));
         bytes32 digest = _hashTypedDataV4(structHash);
         address signer = ECDSA.recover(digest, signature);
         if (signer == address(0) || signer != expectedSigner) {
@@ -128,11 +127,31 @@ contract BallotContract is VotarAccessControl, EIP712 {
         return _domainSeparatorV4();
     }
 
-    function _assertValidMerkleProof(
-        uint256 electionId,
-        bytes32 voterLeaf,
-        bytes32[] calldata merkleProof
-    ) private view {
+    /**
+     * @dev VOTAR-321 — Autonomous close by `block.timestamp` and explicit CLOSED state.
+     *      Manual close sets state to CLOSED; auto-close also rejects when past endTime
+     *      even if the backend has not yet synced CLOSED.
+     */
+    function _assertElectionAcceptingVotes(uint256 electionId) private view {
+        MerkleRootStore.ElectionState state = merkleRootStore.getElectionState(electionId);
+        if (state == MerkleRootStore.ElectionState.CLOSED || state == MerkleRootStore.ElectionState.TALLIED) {
+            revert ElectionClosed(electionId);
+        }
+
+        uint256 endTime = merkleRootStore.getElectionEndTime(electionId);
+        if (endTime > 0 && block.timestamp >= endTime) {
+            revert ElectionClosed(electionId);
+        }
+
+        if (state != MerkleRootStore.ElectionState.OPEN) {
+            revert ElectionClosed(electionId);
+        }
+    }
+
+    function _assertValidMerkleProof(uint256 electionId, bytes32 voterLeaf, bytes32[] calldata merkleProof)
+        private
+        view
+    {
         (bytes32 root, uint256 publishedAt) = merkleRootStore.getMerkleRoot(electionId);
         if (root == bytes32(0) || publishedAt == 0) revert MerkleRootNotPublished(electionId);
 
