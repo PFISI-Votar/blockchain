@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
-import { BallotContract, MerkleRootStore } from "../typechain-types";
+import { BallotContract, MerkleRootStore, VoteRegistry } from "../typechain-types";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import {
   buildPadronMerkleTree,
@@ -15,6 +15,7 @@ const VOTE_TYPE = {
     { name: "electionId", type: "uint256" },
     { name: "nullifier", type: "bytes32" },
     { name: "selectionHash", type: "bytes32" },
+    { name: "candidateId", type: "uint256" },
     { name: "timestamp", type: "uint256" },
   ],
 };
@@ -37,15 +38,17 @@ function computeSelectionHash(payload: {
   return ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(normalized)));
 }
 
-describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
+describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
   const ELECTION_ID = 357n;
   const VOTER_DNI = "30222333";
   const VOTER_EMAIL = "bruno@frvm.utn.edu.ar";
   const VOTER_HASH = hashVotante(VOTER_DNI, VOTER_EMAIL);
   const VOTER_LEAF = toBytes32Hex(VOTER_HASH);
   const TIMESTAMP = 1_700_000_000n;
+  const CANDIDATE_ID = 101n;
 
   let store: MerkleRootStore;
+  let registry: VoteRegistry;
   let ballot: BallotContract;
   let admin: HardhatEthersSigner;
   let merkleUpdater: HardhatEthersSigner;
@@ -54,6 +57,8 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
   let validProof: string[];
   let nullifier: string;
   let selectionHash: string;
+  let VOTO_BLANCO: bigint;
+  let VOTO_NULO: bigint;
 
   async function deployFixture() {
     const [admin, merkleUpdater, ephemeralSigner, voter] = await ethers.getSigners();
@@ -62,9 +67,21 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
     const store = await storeFactory.deploy(admin.address);
     await store.waitForDeployment();
 
+    const registryFactory = await ethers.getContractFactory("VoteRegistry");
+    const registry = await registryFactory.deploy(admin.address);
+    await registry.waitForDeployment();
+
     const ballotFactory = await ethers.getContractFactory("BallotContract");
-    const ballot = await ballotFactory.deploy(admin.address, await store.getAddress());
+    const ballot = await ballotFactory.deploy(
+      admin.address,
+      await store.getAddress(),
+      await registry.getAddress(),
+    );
     await ballot.waitForDeployment();
+
+    await registry
+      .connect(admin)
+      .grantRole(await registry.BALLOT_ROLE(), await ballot.getAddress());
 
     await store.connect(admin).grantRole(await store.MERKLE_UPDATER_ROLE(), merkleUpdater.address);
     await store.connect(admin).grantRole(await store.ELECTION_ADMIN_ROLE(), admin.address);
@@ -80,12 +97,10 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
 
     await store.connect(merkleUpdater).publishRoot(ELECTION_ID, merkleRoot);
 
-    // VOTAR-321: voting requires OPEN state and an active window.
     const now = Math.floor(Date.now() / 1000);
     await store.connect(admin).setElectionWindow(ELECTION_ID, now, now + 3600);
     await store.connect(admin).setElectionState(ELECTION_ID, 2); // OPEN
 
-    // Opaque nullifier as produced off-chain by VOTAR-353 (not derived here).
     const nullifier =
       "0x1111111111111111111111111111111111111111111111111111111111111111";
 
@@ -96,8 +111,12 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
       ],
     });
 
+    const VOTO_BLANCO = await registry.VOTO_BLANCO();
+    const VOTO_NULO = await registry.VOTO_NULO();
+
     return {
       store,
+      registry,
       ballot,
       admin,
       merkleUpdater,
@@ -106,6 +125,8 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
       validProof,
       nullifier,
       selectionHash,
+      VOTO_BLANCO,
+      VOTO_NULO,
     };
   }
 
@@ -115,6 +136,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
       electionId: bigint;
       nullifier: string;
       selectionHash: string;
+      candidateId: bigint;
       timestamp: bigint;
     }>,
   ) {
@@ -129,6 +151,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
       electionId: overrides?.electionId ?? ELECTION_ID,
       nullifier: overrides?.nullifier ?? nullifier,
       selectionHash: overrides?.selectionHash ?? selectionHash,
+      candidateId: overrides?.candidateId ?? CANDIDATE_ID,
       timestamp: overrides?.timestamp ?? TIMESTAMP,
     };
 
@@ -138,6 +161,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
   beforeEach(async () => {
     ({
       store,
+      registry,
       ballot,
       admin,
       merkleUpdater,
@@ -146,6 +170,8 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
       validProof,
       nullifier,
       selectionHash,
+      VOTO_BLANCO,
+      VOTO_NULO,
     } = await loadFixture(deployFixture));
   });
 
@@ -174,6 +200,27 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
+            CANDIDATE_ID,
+          ),
+      ).to.be.revertedWithCustomError(ballot, "InvalidSignature");
+    });
+
+    it("reverts InvalidSignature when candidateId is tampered (VOTAR-346)", async () => {
+      const signature = await signVote(ephemeralSigner, { candidateId: CANDIDATE_ID });
+
+      await expect(
+        ballot
+          .connect(voter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            validProof,
+            nullifier,
+            selectionHash,
+            TIMESTAMP,
+            ephemeralSigner.address,
+            signature,
+            999n,
           ),
       ).to.be.revertedWithCustomError(ballot, "InvalidSignature");
     });
@@ -195,6 +242,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
+            CANDIDATE_ID,
           ),
       ).to.emit(ballot, "SignedVoteCast");
 
@@ -210,6 +258,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
+            CANDIDATE_ID,
           ),
       ).to.be.revertedWithCustomError(ballot, "NullifierAlreadyUsed");
     });
@@ -231,17 +280,20 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
+            CANDIDATE_ID,
           ),
       )
         .to.emit(ballot, "SignedVoteCast")
-        .withArgs(ELECTION_ID, VOTER_LEAF, nullifier, selectionHash, ephemeralSigner.address);
+        .withArgs(ELECTION_ID, nullifier, selectionHash, ephemeralSigner.address)
+        .and.to.emit(registry, "VoteCast")
+        .withArgs(ELECTION_ID, nullifier, CANDIDATE_ID, false);
 
       expect(await ballot.hasVoted(ELECTION_ID, VOTER_LEAF)).to.equal(true);
       expect(await ballot.isNullifierUsed(ELECTION_ID, nullifier)).to.equal(true);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_ID)).to.equal(1n);
     });
 
     it("reverts InvalidSignature when recovered signer does not match expectedSigner", async () => {
-      // Signature from ephemeral key, but expectedSigner claims to be voter.
       const signature = await signVote(ephemeralSigner);
 
       await expect(
@@ -256,6 +308,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
             TIMESTAMP,
             voter.address,
             signature,
+            CANDIDATE_ID,
           ),
       ).to.be.revertedWithCustomError(ballot, "InvalidSignature");
     });
@@ -285,8 +338,130 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
+            CANDIDATE_ID,
           ),
       ).to.emit(ballot, "SignedVoteCast");
+    });
+
+    it("emits VoteCast with reserved VOTO_BLANCO id for blank ballots", async () => {
+      const blankHash = computeSelectionHash({ votoEnBlanco: true, selecciones: [] });
+      const signature = await signVote(ephemeralSigner, {
+        selectionHash: blankHash,
+        candidateId: VOTO_BLANCO,
+      });
+
+      await expect(
+        ballot
+          .connect(voter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            validProof,
+            nullifier,
+            blankHash,
+            TIMESTAMP,
+            ephemeralSigner.address,
+            signature,
+            VOTO_BLANCO,
+          ),
+      )
+        .to.emit(registry, "VoteCast")
+        .withArgs(ELECTION_ID, nullifier, VOTO_BLANCO, false);
+
+      expect(await registry.getTally(ELECTION_ID, VOTO_BLANCO)).to.equal(1n);
+    });
+
+    it("emits VoteCast with reserved VOTO_NULO id for null ballots", async () => {
+      const nullHash = computeSelectionHash({ votoNulo: true, selecciones: [] });
+      const signature = await signVote(ephemeralSigner, {
+        selectionHash: nullHash,
+        candidateId: VOTO_NULO,
+      });
+
+      await expect(
+        ballot
+          .connect(voter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            validProof,
+            nullifier,
+            nullHash,
+            TIMESTAMP,
+            ephemeralSigner.address,
+            signature,
+            VOTO_NULO,
+          ),
+      )
+        .to.emit(registry, "VoteCast")
+        .withArgs(ELECTION_ID, nullifier, VOTO_NULO, false);
+    });
+  });
+
+  describe("VOTAR-346 — privacy and atomicity", () => {
+    it("SignedVoteCast does not include voterLeaf (no leaf↔nullifier join)", async () => {
+      const fragment = ballot.interface.getEvent("SignedVoteCast");
+      expect(fragment).to.not.equal(null);
+      expect(fragment!.inputs.map((input) => input.name)).to.deep.equal([
+        "electionId",
+        "nullifier",
+        "selectionHash",
+        "signer",
+      ]);
+      expect(fragment!.inputs.some((input) => input.name === "voterLeaf")).to.equal(false);
+    });
+
+    it("VoteCast topics do not include the submitting wallet address", async () => {
+      const signature = await signVote(ephemeralSigner);
+      const tx = await ballot
+        .connect(voter)
+        .castSignedVote(
+          ELECTION_ID,
+          VOTER_LEAF,
+          validProof,
+          nullifier,
+          selectionHash,
+          TIMESTAMP,
+          ephemeralSigner.address,
+          signature,
+          CANDIDATE_ID,
+        );
+      const receipt = await tx.wait();
+      expect(receipt).to.not.equal(null);
+
+      const voteCastTopic = registry.interface.getEvent("VoteCast")!.topicHash;
+      const voteCastLog = receipt!.logs.find((log) => log.topics[0] === voteCastTopic);
+      expect(voteCastLog).to.not.equal(undefined);
+      expect(voteCastLog!.topics.length).to.equal(3);
+
+      const voterAddressTopic = ethers.zeroPadValue(voter.address, 32).toLowerCase();
+      expect(voteCastLog!.topics.map((t) => t.toLowerCase())).to.not.include(voterAddressTopic);
+    });
+
+    it("reverts the whole cast when VoteRegistry.recordVote cannot run (paused)", async () => {
+      await registry.connect(admin).grantRole(await registry.PAUSER_ROLE(), admin.address);
+      await registry.connect(admin).pause();
+
+      const signature = await signVote(ephemeralSigner);
+
+      await expect(
+        ballot
+          .connect(voter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            validProof,
+            nullifier,
+            selectionHash,
+            TIMESTAMP,
+            ephemeralSigner.address,
+            signature,
+            CANDIDATE_ID,
+          ),
+      ).to.be.revertedWithCustomError(registry, "EnforcedPause");
+
+      expect(await ballot.hasVoted(ELECTION_ID, VOTER_LEAF)).to.equal(false);
+      expect(await ballot.isNullifierUsed(ELECTION_ID, nullifier)).to.equal(false);
     });
   });
 });

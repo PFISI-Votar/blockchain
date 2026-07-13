@@ -4,7 +4,7 @@ import {
   loadFixture,
   time,
 } from "@nomicfoundation/hardhat-toolbox/network-helpers";
-import { BallotContract, MerkleRootStore } from "../typechain-types";
+import { BallotContract, MerkleRootStore, VoteRegistry } from "../typechain-types";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import {
   buildPadronMerkleTree,
@@ -28,6 +28,7 @@ describe("BallotContract — US-339 UATs", () => {
   };
 
   let store: MerkleRootStore;
+  let registry: VoteRegistry;
   let ballot: BallotContract;
   let admin: HardhatEthersSigner;
   let merkleUpdater: HardhatEthersSigner;
@@ -57,9 +58,21 @@ describe("BallotContract — US-339 UATs", () => {
     const store = await storeFactory.deploy(admin.address);
     await store.waitForDeployment();
 
+    const registryFactory = await ethers.getContractFactory("VoteRegistry");
+    const registry = await registryFactory.deploy(admin.address);
+    await registry.waitForDeployment();
+
     const ballotFactory = await ethers.getContractFactory("BallotContract");
-    const ballot = await ballotFactory.deploy(admin.address, await store.getAddress());
+    const ballot = await ballotFactory.deploy(
+      admin.address,
+      await store.getAddress(),
+      await registry.getAddress(),
+    );
     await ballot.waitForDeployment();
+
+    await registry
+      .connect(admin)
+      .grantRole(await registry.BALLOT_ROLE(), await ballot.getAddress());
 
     await store.connect(admin).grantRole(await store.MERKLE_UPDATER_ROLE(), merkleUpdater.address);
     await store.connect(admin).grantRole(await store.ELECTION_ADMIN_ROLE(), admin.address);
@@ -79,6 +92,7 @@ describe("BallotContract — US-339 UATs", () => {
 
     return {
       store,
+      registry,
       ballot,
       admin,
       merkleUpdater,
@@ -93,6 +107,7 @@ describe("BallotContract — US-339 UATs", () => {
   beforeEach(async () => {
     ({
       store,
+      registry,
       ballot,
       admin,
       merkleUpdater,
@@ -136,12 +151,13 @@ describe("BallotContract — US-339 UATs", () => {
   });
 
   describe("UAT-02: procesamiento exitoso con prueba legítima", () => {
-    it("records the vote and emits VoteCast when Merkle proof is valid", async () => {
-      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
-        .to.emit(ballot, "VoteCast")
-        .withArgs(ELECTION_ID, VOTER_LEAF, voter.address);
+    it("records hasVoted without writing VoteRegistry (no identity↔preference FK)", async () => {
+      await ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof);
 
       expect(await ballot.hasVoted(ELECTION_ID, VOTER_LEAF)).to.equal(true);
+      expect(await registry.getTally(ELECTION_ID, 101n)).to.equal(0n);
+      const [, hasVotedInRegistry] = await registry.getVoterState(ELECTION_ID, VOTER_LEAF);
+      expect(hasVotedInRegistry).to.equal(false);
     });
   });
 
