@@ -81,6 +81,16 @@ async function main() {
   await ballot.waitForDeployment();
   const ballotAddress = await ballot.getAddress();
 
+  // VOTAR-337 — ElectionFactory (master) wired to the shared MerkleRootStore.
+  const electionFactoryFactory =
+    await ethers.getContractFactory("ElectionFactory");
+  const electionFactory = await electionFactoryFactory.deploy(
+    admin.address,
+    contractAddress,
+  );
+  await electionFactory.waitForDeployment();
+  const electionFactoryAddress = await electionFactory.getAddress();
+
   const merkleUpdaterRole = await contract.MERKLE_UPDATER_ROLE();
   const hasRole = await contract.hasRole(
     merkleUpdaterRole,
@@ -104,6 +114,7 @@ async function main() {
       SEPOLIA_RPC_URL: "http://127.0.0.1:8545",
       MERKLE_ROOT_STORE_ADDRESS: contractAddress,
       BALLOT_CONTRACT_ADDRESS: ballotAddress,
+      ELECTION_FACTORY_ADDRESS: electionFactoryAddress,
       MERKLE_UPDATER_PRIVATE_KEY: HARDHAT_ACCOUNT_1_PRIVATE_KEY,
       CHAIN_ID: chainId,
       ETHERSCAN_BASE_URL: "http://localhost",
@@ -134,6 +145,7 @@ async function main() {
 
   console.log(`[deploy-local] MerkleRootStore: ${contractAddress}`);
   console.log(`[deploy-local] BallotContract:  ${ballotAddress}`);
+  console.log(`[deploy-local] ElectionFactory: ${electionFactoryAddress}`);
   console.log(`[deploy-local] DEFAULT_ADMIN_ROLE: ${admin.address}`);
   console.log(`[deploy-local] MERKLE_UPDATER_ROLE: ${merkleUpdater.address}`);
   console.log(`[deploy-local] chainId: ${chainId}`);
