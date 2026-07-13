@@ -124,6 +124,45 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
         registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A),
       ).to.be.revertedWithCustomError(registry, "EnforcedPause");
     });
+
+    it("keeps VOTAR-350 view helpers readable while paused", async () => {
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A);
+      await registry.connect(admin).grantRole(await registry.PAUSER_ROLE(), admin.address);
+      await registry.connect(admin).pause();
+
+      const [totalVotes, blankVotes, nullVotes] =
+        await registry.getParticipationStats(ELECTION_ID);
+      expect(totalVotes).to.equal(1n);
+      expect(blankVotes).to.equal(0n);
+      expect(nullVotes).to.equal(0n);
+      expect(await registry.getVotesByCandidate(ELECTION_ID, CANDIDATE_A)).to.equal(1n);
+      expect(await registry.verifyReceipt(VOTER_HASH)).to.equal(true);
+    });
+  });
+
+  describe("VOTAR-350 participation and receipt views", () => {
+    it("aggregates total/blank/null and verifies receipt inclusion", async () => {
+      const hash2 =
+        "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
+
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash2, VOTO_BLANCO);
+
+      let [totalVotes, blankVotes, nullVotes] =
+        await registry.getParticipationStats(ELECTION_ID);
+      expect(totalVotes).to.equal(2n);
+      expect(blankVotes).to.equal(1n);
+      expect(nullVotes).to.equal(0n);
+      expect(await registry.verifyReceipt(VOTER_HASH)).to.equal(true);
+      expect(await registry.verifyReceipt(hash2)).to.equal(true);
+
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash2, VOTO_NULO);
+      [totalVotes, blankVotes, nullVotes] =
+        await registry.getParticipationStats(ELECTION_ID);
+      expect(totalVotes).to.equal(2n);
+      expect(blankVotes).to.equal(0n);
+      expect(nullVotes).to.equal(1n);
+    });
   });
 
   describe("UAT-02: event filter matches on-chain tallies", () => {

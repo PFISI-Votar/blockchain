@@ -90,6 +90,11 @@ async function main() {
   await ballot.waitForDeployment();
   const ballotAddress = await ballot.getAddress();
 
+  const auditFactory = await ethers.getContractFactory("AuditViewContract");
+  const auditView = await auditFactory.deploy(contractAddress, registryAddress);
+  await auditView.waitForDeployment();
+  const auditViewAddress = await auditView.getAddress();
+
   const ballotRole = await registry.BALLOT_ROLE();
   const hasBallotRole = await registry.hasRole(ballotRole, ballotAddress);
   if (!hasBallotRole) {
@@ -125,6 +130,7 @@ async function main() {
       SEPOLIA_RPC_URL: "http://127.0.0.1:8545",
       MERKLE_ROOT_STORE_ADDRESS: contractAddress,
       VOTE_REGISTRY_ADDRESS: registryAddress,
+      AUDIT_VIEW_ADDRESS: auditViewAddress,
       BALLOT_CONTRACT_ADDRESS: ballotAddress,
       MERKLE_UPDATER_PRIVATE_KEY: HARDHAT_ACCOUNT_1_PRIVATE_KEY,
       CHAIN_ID: chainId,
@@ -143,6 +149,7 @@ async function main() {
       VITE_CHAIN_ID: chainId,
       VITE_BALLOT_CONTRACT_ADDRESS: ballotAddress,
       VITE_VOTE_REGISTRY_ADDRESS: registryAddress,
+      VITE_AUDIT_VIEW_ADDRESS: auditViewAddress,
       // Hardhat account #0 — pays gas for castSignedVote (local/testnet only)
       VITE_VOTE_TRANSMITTER_PRIVATE_KEY:
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
@@ -158,6 +165,7 @@ async function main() {
   console.log(`[deploy-local] MerkleRootStore: ${contractAddress}`);
   console.log(`[deploy-local] VoteRegistry:    ${registryAddress}`);
   console.log(`[deploy-local] BallotContract:  ${ballotAddress}`);
+  console.log(`[deploy-local] AuditView:       ${auditViewAddress}`);
   console.log(`[deploy-local] DEFAULT_ADMIN_ROLE: ${admin.address}`);
   console.log(`[deploy-local] MERKLE_UPDATER_ROLE: ${merkleUpdater.address}`);
   console.log(`[deploy-local] chainId: ${chainId}`);
