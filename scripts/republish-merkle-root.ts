@@ -1,31 +1,68 @@
 import { ethers } from 'hardhat'
 
+/**
+ * Republish Merkle root after Hardhat restart (ephemeral chain state).
+ *
+ * Usage:
+ *   npx hardhat run scripts/republish-merkle-root.ts --network localhost \
+ *     --election-id 2 \
+ *     --merkle-root 0x... \
+ *     --store-address 0x...
+ *
+ * Or via env:
+ *   ELECTION_ID=2 MERKLE_ROOT=0x... MERKLE_ROOT_STORE_ADDRESS=0x... npx hardhat run ...
+ *
+ * Note: Hardhat's `run` does not forward unknown CLI flags to the script.
+ * Prefer environment variables for parameters.
+ */
 async function main() {
-  const electionId = 2
-  const merkleRoot = '0x8cadaf0f1cadaa1e1ca6c794557f48588528d6f7e651f04dd69eb6076732a11b'
+  const electionId = Number(process.env.ELECTION_ID ?? '0')
+  const merkleRoot = process.env.MERKLE_ROOT
+  const merkleRootStoreAddress =
+    process.env.MERKLE_ROOT_STORE_ADDRESS ??
+    process.env.MERKLE_STORE_ADDRESS
+
+  if (!Number.isFinite(electionId) || electionId <= 0) {
+    throw new Error(
+      'Set ELECTION_ID to a positive election id (e.g. ELECTION_ID=2).',
+    )
+  }
+  if (!merkleRoot || !/^0x[0-9a-fA-F]{64}$/.test(merkleRoot)) {
+    throw new Error(
+      'Set MERKLE_ROOT to a bytes32 hex value (0x + 64 hex chars).',
+    )
+  }
+  if (
+    !merkleRootStoreAddress ||
+    !/^0x[0-9a-fA-F]{40}$/.test(merkleRootStoreAddress)
+  ) {
+    throw new Error(
+      'Set MERKLE_ROOT_STORE_ADDRESS to the deployed MerkleRootStore address.',
+    )
+  }
 
   console.log(`Publishing Merkle root for election ${electionId}`)
   console.log(`Merkle root: ${merkleRoot}`)
+  console.log(`Store: ${merkleRootStoreAddress}`)
 
-  // Get account #1 (MERKLE_UPDATER_ROLE holder)
   const [, merkleUpdater] = await ethers.getSigners()
   console.log(`Using merkle updater: ${merkleUpdater.address}`)
 
-  // Get the MerkleRootStore contract
-  const merkleRootStoreAddress = '0x5FbDB2315678afecb367f032d93F642f64180aa3'
-  const MerkleRootStore = await ethers.getContractAt('MerkleRootStore', merkleRootStoreAddress, merkleUpdater)
+  const MerkleRootStore = await ethers.getContractAt(
+    'MerkleRootStore',
+    merkleRootStoreAddress,
+    merkleUpdater,
+  )
 
-  // Publish the root
   const tx = await MerkleRootStore.publishRoot(electionId, merkleRoot)
   console.log(`Transaction sent: ${tx.hash}`)
 
   const receipt = await tx.wait()
-  console.log(`Transaction mined in block ${receipt.blockNumber}`)
-  console.log('✅ Merkle root published successfully!')
+  console.log(`Transaction mined in block ${receipt?.blockNumber}`)
+  console.log('Merkle root published successfully')
 
-  // Verify
   const [root, timestamp] = await MerkleRootStore.getMerkleRoot(electionId)
-  console.log(`\nVerification:`)
+  console.log(`Verification:`)
   console.log(`  Published root: ${root}`)
   console.log(`  Timestamp: ${timestamp}`)
 }
