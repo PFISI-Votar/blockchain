@@ -51,6 +51,17 @@ Luego, en otras terminales: `npm run dev` en `back/` y `front/` (reiniciá el fr
 
 Si reiniciás Hardhat node, volvé a correr `npm run dev` en este repo para redeployar.
 
+La red `hardhat` tiene auto-mining (`interval: 0`) para confirmar transacciones al instante en tests/dev.
+
+Si solo necesitás republicar una raíz Merkle contra un nodo local ya desplegado:
+
+```bash
+ELECTION_ID=2 \
+MERKLE_ROOT=0x... \
+MERKLE_ROOT_STORE_ADDRESS=0x... \
+npx hardhat run scripts/republish-merkle-root.ts --network localhost
+```
+
 Comandos puntuales:
 
 ```bash
