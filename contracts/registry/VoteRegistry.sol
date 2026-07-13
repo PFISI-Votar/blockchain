@@ -9,6 +9,8 @@ import {VotarAccessControl} from "../access/VotarAccessControl.sol";
  * @dev VOTAR-346 — Emits indexed `VoteCast` for public audit without linking to
  *      wallet identity or padron `voterLeaf`. Only `BALLOT_ROLE` may record votes
  *      (typically BallotContract via castSignedVote with nullifier as voterHash).
+ *      VOTAR-350 — Pure view helpers for participation stats, per-candidate tallies
+ *      and receipt inclusion checks (gas-free RPC reads).
  *
  *      Reserved candidate IDs for non-partisan ballots (blanco/nulo) are exposed as
  *      constants so auditors and UIs can filter those events the same way as
@@ -45,6 +47,10 @@ contract VoteRegistry is VotarAccessControl {
 
     mapping(uint256 electionId => mapping(bytes32 voterHash => VoterState state)) private _votes;
     mapping(uint256 electionId => mapping(uint256 candidateId => uint256 count)) private _tallies;
+    /// @notice Unique voters that have cast at least one vote (overwrite does not increment).
+    mapping(uint256 electionId => uint256 totalVotes) private _totalVotes;
+    /// @notice Anonymous receipt anchors included on-chain (`voterHash` / nullifier).
+    mapping(bytes32 receiptHash => bool included) private _receiptIncluded;
 
     constructor(address admin) VotarAccessControl(admin) {}
 
@@ -74,6 +80,11 @@ contract VoteRegistry is VotarAccessControl {
             _tallies[electionId][candidateId] += 1;
             state.candidateId = candidateId;
             state.hasVoted = true;
+            unchecked {
+                _totalVotes[electionId] += 1;
+            }
+            // Receipt anchor = anonymous voterHash (nullifier). Never identity leaf / wallet.
+            _receiptIncluded[voterHash] = true;
         }
 
         emit VoteCast(electionId, voterHash, candidateId, isOverwrite);
@@ -82,6 +93,37 @@ contract VoteRegistry is VotarAccessControl {
     /// @notice Returns the running tally for a candidate (includes reserved ids).
     function getTally(uint256 electionId, uint256 candidateId) external view returns (uint256) {
         return _tallies[electionId][candidateId];
+    }
+
+    /**
+     * @notice VOTAR-350 — Votes counted for a candidate; unknown ids return 0.
+     * @dev Alias of {getTally} with the acceptance-criteria name.
+     */
+    function getVotesByCandidate(uint256 electionId, uint256 candidateId) external view returns (uint256) {
+        return _tallies[electionId][candidateId];
+    }
+
+    /**
+     * @notice VOTAR-350 — Aggregate participation: unique votes, blank and null tallies.
+     * @return totalVotes Unique voterHashes that have voted (overwrites do not double-count).
+     * @return blankVotes Current tally of {VOTO_BLANCO}.
+     * @return nullVotes Current tally of {VOTO_NULO}.
+     */
+    function getParticipationStats(uint256 electionId)
+        external
+        view
+        returns (uint256 totalVotes, uint256 blankVotes, uint256 nullVotes)
+    {
+        return (_totalVotes[electionId], _tallies[electionId][VOTO_BLANCO], _tallies[electionId][VOTO_NULO]);
+    }
+
+    /**
+     * @notice VOTAR-350 — Whether an anonymous receipt hash was included on-chain.
+     * @param receiptHash Participation anchor (nullifier / voterHash). Does not reveal identity.
+     * @return True if a vote was recorded under that hash; false otherwise (safe default).
+     */
+    function verifyReceipt(bytes32 receiptHash) external view returns (bool) {
+        return _receiptIncluded[receiptHash];
     }
 
     /// @notice Returns the last recorded candidate and whether the voterHash has voted.
