@@ -48,7 +48,7 @@ contract AuditViewContract {
         view
         returns (uint256 totalVotes, uint256 blankVotes, uint256 nullVotes)
     {
-        return voteRegistry.getParticipationStats(electionId);
+        (totalVotes, blankVotes, nullVotes) = voteRegistry.getParticipationStats(electionId);
     }
 
     /**
