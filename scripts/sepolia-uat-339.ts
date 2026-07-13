@@ -94,8 +94,6 @@ async function main() {
 
   const store = await ethers.getContractAt("MerkleRootStore", merkleRootStoreAddress);
   const ballot = await ethers.getContractAt("BallotContract", ballotAddress);
-  const registry = await ethers.getContractAt("VoteRegistry", voteRegistryAddress);
-  const candidateId = 101n;
 
   const [deployer] = await ethers.getSigners();
   const adminAddress = process.env.ADMIN_MULTISIG_ADDRESS!;
@@ -165,9 +163,7 @@ async function main() {
       ? `${original.slice(0, -1)}b`
       : `${original.slice(0, -1)}a`;
 
-    await ballot
-      .connect(deployer)
-      .castVote(electionIdForUat, voterLeaf, tamperedProof, candidateId);
+    await ballot.connect(deployer).castVote(electionIdForUat, voterLeaf, tamperedProof);
     fail("UAT-01: tampered proof should revert", new Error("Transaction succeeded unexpectedly"));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -178,20 +174,14 @@ async function main() {
     }
   }
 
-  // UAT-02: valid proof → VoteCast persisted
+  // UAT-02: valid proof → hasVoted (castVote does not write VoteRegistry)
   try {
-    const tx = await ballot
-      .connect(deployer)
-      .castVote(electionIdForUat, voterLeaf, validProof, candidateId);
+    const tx = await ballot.connect(deployer).castVote(electionIdForUat, voterLeaf, validProof);
     const receipt = await tx.wait();
     const hasVoted = await ballot.hasVoted(electionIdForUat, voterLeaf);
-    const tally = await registry.getTally(electionIdForUat, candidateId);
 
     if (!hasVoted) {
       throw new Error("hasVoted returned false after successful castVote");
-    }
-    if (tally < 1n) {
-      throw new Error("VoteRegistry tally did not increase after castVote");
     }
 
     pass(`UAT-02: valid proof accepted (tx: ${receipt!.hash})`);

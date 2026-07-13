@@ -7,11 +7,16 @@ import {VotarAccessControl} from "../access/VotarAccessControl.sol";
  * @title VoteRegistry
  * @notice Canonical on-chain vote registry keyed by anonymous voterHash (nullifier).
  * @dev VOTAR-346 — Emits indexed `VoteCast` for public audit without linking to
- *      wallet identity. Only `BALLOT_ROLE` may record votes (typically BallotContract).
+ *      wallet identity or padron `voterLeaf`. Only `BALLOT_ROLE` may record votes
+ *      (typically BallotContract via castSignedVote with nullifier as voterHash).
  *
  *      Reserved candidate IDs for non-partisan ballots (blanco/nulo) are exposed as
  *      constants so auditors and UIs can filter those events the same way as
  *      positive votes. Full candidate-set validation remains VOTAR-345.
+ *      Overwrite/LAST_WINS tallies work here; end-to-end revote via Ballot is VOTAR-344.
+ *
+ *      Limitation: one `candidateId` per voterHash — multi-category ballots must
+ *      project to a single audit id off-chain until a per-category model exists.
  */
 contract VoteRegistry is VotarAccessControl {
     /// @notice Reserved candidate id for blank ballots (does not collide with real ids).

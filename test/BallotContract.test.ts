@@ -19,7 +19,6 @@ describe("BallotContract — US-339 UATs", () => {
   const VOTER_EMAIL = "bruno@frvm.utn.edu.ar";
   const VOTER_HASH = hashVotante(VOTER_DNI, VOTER_EMAIL);
   const VOTER_LEAF = toBytes32Hex(VOTER_HASH);
-  const CANDIDATE_ID = 101n;
   const ElectionState = {
     DRAFT: 0,
     CONFIGURED: 1,
@@ -128,9 +127,8 @@ describe("BallotContract — US-339 UATs", () => {
         ? `${original.slice(0, -1)}b`
         : `${original.slice(0, -1)}a`;
 
-      await expect(
-        ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, tamperedProof, CANDIDATE_ID),
-      ).to.be.revertedWithCustomError(ballot, "InvalidMerkleProof");
+      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, tamperedProof))
+        .to.be.revertedWithCustomError(ballot, "InvalidMerkleProof");
 
       expect(await ballot.hasVoted(ELECTION_ID, VOTER_LEAF)).to.equal(false);
     });
@@ -147,22 +145,19 @@ describe("BallotContract — US-339 UATs", () => {
         foreignIndex,
       );
 
-      await expect(
-        ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, foreignProof, CANDIDATE_ID),
-      ).to.be.revertedWithCustomError(ballot, "InvalidMerkleProof");
+      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, foreignProof))
+        .to.be.revertedWithCustomError(ballot, "InvalidMerkleProof");
     });
   });
 
   describe("UAT-02: procesamiento exitoso con prueba legítima", () => {
-    it("records the vote and emits VoteCast via VoteRegistry when Merkle proof is valid", async () => {
-      await expect(
-        ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof, CANDIDATE_ID),
-      )
-        .to.emit(registry, "VoteCast")
-        .withArgs(ELECTION_ID, VOTER_LEAF, CANDIDATE_ID, false);
+    it("records hasVoted without writing VoteRegistry (no identity↔preference FK)", async () => {
+      await ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof);
 
       expect(await ballot.hasVoted(ELECTION_ID, VOTER_LEAF)).to.equal(true);
-      expect(await registry.getTally(ELECTION_ID, CANDIDATE_ID)).to.equal(1n);
+      expect(await registry.getTally(ELECTION_ID, 101n)).to.equal(0n);
+      const [, hasVotedInRegistry] = await registry.getVoterState(ELECTION_ID, VOTER_LEAF);
+      expect(hasVotedInRegistry).to.equal(false);
     });
   });
 
@@ -171,9 +166,7 @@ describe("BallotContract — US-339 UATs", () => {
       const unpublishedElectionId = 999n;
       await openElectionWindow(store, admin, unpublishedElectionId);
       await expect(
-        ballot
-          .connect(voter)
-          .castVote(unpublishedElectionId, VOTER_LEAF, validProof, CANDIDATE_ID),
+        ballot.connect(voter).castVote(unpublishedElectionId, VOTER_LEAF, validProof),
       )
         .to.be.revertedWithCustomError(ballot, "MerkleRootNotPublished")
         .withArgs(unpublishedElectionId);
@@ -184,9 +177,8 @@ describe("BallotContract — US-339 UATs", () => {
       await ballot.connect(admin).grantRole(PAUSER_ROLE, admin.address);
       await ballot.connect(admin).pause();
 
-      await expect(
-        ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof, CANDIDATE_ID),
-      ).to.be.revertedWithCustomError(ballot, "EnforcedPause");
+      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
+        .to.be.revertedWithCustomError(ballot, "EnforcedPause");
     });
 
     it("reads the anchored root from MerkleRootStore", async () => {
@@ -199,9 +191,7 @@ describe("BallotContract — US-339 UATs", () => {
     it("reverts ElectionClosed when election state is CLOSED (manual close)", async () => {
       await store.connect(admin).setElectionState(ELECTION_ID, ElectionState.CLOSED);
 
-      await expect(
-        ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof, CANDIDATE_ID),
-      )
+      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
         .to.be.revertedWithCustomError(ballot, "ElectionClosed")
         .withArgs(ELECTION_ID);
     });
@@ -210,9 +200,7 @@ describe("BallotContract — US-339 UATs", () => {
       const endTime = await store.getElectionEndTime(ELECTION_ID);
       await time.increaseTo(endTime);
 
-      await expect(
-        ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof, CANDIDATE_ID),
-      )
+      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
         .to.be.revertedWithCustomError(ballot, "ElectionClosed")
         .withArgs(ELECTION_ID);
     });
@@ -222,30 +210,9 @@ describe("BallotContract — US-339 UATs", () => {
         .connect(admin)
         .setElectionState(ELECTION_ID, ElectionState.CONFIGURED);
 
-      await expect(
-        ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof, CANDIDATE_ID),
-      )
+      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
         .to.be.revertedWithCustomError(ballot, "ElectionClosed")
         .withArgs(ELECTION_ID);
-    });
-  });
-
-  describe("VOTAR-346 — privacy of VoteCast", () => {
-    it("does not index the submitting wallet address on VoteCast", async () => {
-      const tx = await ballot
-        .connect(voter)
-        .castVote(ELECTION_ID, VOTER_LEAF, validProof, CANDIDATE_ID);
-      const receipt = await tx.wait();
-      expect(receipt).to.not.equal(null);
-
-      const voteCastTopic = registry.interface.getEvent("VoteCast")!.topicHash;
-      const voteCastLog = receipt!.logs.find((log) => log.topics[0] === voteCastTopic);
-      expect(voteCastLog).to.not.equal(undefined);
-
-      // topics[0]=sig, topics[1]=electionId, topics[2]=voterHash — no address topic
-      expect(voteCastLog!.topics.length).to.equal(3);
-      const voterAddressTopic = ethers.zeroPadValue(voter.address, 32).toLowerCase();
-      expect(voteCastLog!.topics.map((t) => t.toLowerCase())).to.not.include(voterAddressTopic);
     });
   });
 });
