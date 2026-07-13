@@ -35,7 +35,27 @@ async function getMerkleRootStoreAddress(): Promise<string> {
   return address;
 }
 
-async function getBallotContractAddress(merkleRootStoreAddress: string): Promise<string> {
+async function getVoteRegistryAddress(): Promise<string> {
+  const existing = process.env.VOTE_REGISTRY_ADDRESS;
+  if (existing && ethers.isAddress(existing)) {
+    console.log(`[uat-339] Using existing VoteRegistry: ${existing}`);
+    return existing;
+  }
+
+  const admin = process.env.ADMIN_MULTISIG_ADDRESS!;
+  console.log("[uat-339] Deploying VoteRegistry...");
+  const factory = await ethers.getContractFactory("VoteRegistry");
+  const contract = await factory.deploy(admin);
+  await contract.waitForDeployment();
+  const address = await contract.getAddress();
+  console.log(`[uat-339] VoteRegistry deployed at: ${address}`);
+  return address;
+}
+
+async function getBallotContractAddress(
+  merkleRootStoreAddress: string,
+  voteRegistryAddress: string,
+): Promise<string> {
   const existing = process.env[BALLOT_CONTRACT_ADDRESS_ENV];
   if (existing && ethers.isAddress(existing)) {
     console.log(`[uat-339] Using existing BallotContract: ${existing}`);
@@ -45,9 +65,17 @@ async function getBallotContractAddress(merkleRootStoreAddress: string): Promise
   const admin = process.env.ADMIN_MULTISIG_ADDRESS!;
   console.log("[uat-339] Deploying BallotContract...");
   const factory = await ethers.getContractFactory("BallotContract");
-  const contract = await factory.deploy(admin, merkleRootStoreAddress);
+  const contract = await factory.deploy(admin, merkleRootStoreAddress, voteRegistryAddress);
   await contract.waitForDeployment();
   const address = await contract.getAddress();
+
+  const registry = await ethers.getContractAt("VoteRegistry", voteRegistryAddress);
+  const ballotRole = await registry.BALLOT_ROLE();
+  if (!(await registry.hasRole(ballotRole, address))) {
+    const grantTx = await registry.grantRole(ballotRole, address);
+    await grantTx.wait();
+  }
+
   console.log(`[uat-339] BallotContract deployed at: ${address}`);
   return address;
 }
@@ -58,10 +86,16 @@ async function main() {
   }
 
   const merkleRootStoreAddress = await getMerkleRootStoreAddress();
-  const ballotAddress = await getBallotContractAddress(merkleRootStoreAddress);
+  const voteRegistryAddress = await getVoteRegistryAddress();
+  const ballotAddress = await getBallotContractAddress(
+    merkleRootStoreAddress,
+    voteRegistryAddress,
+  );
 
   const store = await ethers.getContractAt("MerkleRootStore", merkleRootStoreAddress);
   const ballot = await ethers.getContractAt("BallotContract", ballotAddress);
+  const registry = await ethers.getContractAt("VoteRegistry", voteRegistryAddress);
+  const candidateId = 101n;
 
   const [deployer] = await ethers.getSigners();
   const adminAddress = process.env.ADMIN_MULTISIG_ADDRESS!;
@@ -131,7 +165,9 @@ async function main() {
       ? `${original.slice(0, -1)}b`
       : `${original.slice(0, -1)}a`;
 
-    await ballot.connect(deployer).castVote(electionIdForUat, voterLeaf, tamperedProof);
+    await ballot
+      .connect(deployer)
+      .castVote(electionIdForUat, voterLeaf, tamperedProof, candidateId);
     fail("UAT-01: tampered proof should revert", new Error("Transaction succeeded unexpectedly"));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -144,12 +180,18 @@ async function main() {
 
   // UAT-02: valid proof → VoteCast persisted
   try {
-    const tx = await ballot.connect(deployer).castVote(electionIdForUat, voterLeaf, validProof);
+    const tx = await ballot
+      .connect(deployer)
+      .castVote(electionIdForUat, voterLeaf, validProof, candidateId);
     const receipt = await tx.wait();
     const hasVoted = await ballot.hasVoted(electionIdForUat, voterLeaf);
+    const tally = await registry.getTally(electionIdForUat, candidateId);
 
     if (!hasVoted) {
       throw new Error("hasVoted returned false after successful castVote");
+    }
+    if (tally < 1n) {
+      throw new Error("VoteRegistry tally did not increase after castVote");
     }
 
     pass(`UAT-02: valid proof accepted (tx: ${receipt!.hash})`);
@@ -160,6 +202,7 @@ async function main() {
 
   console.log(`\n=== UAT-339 summary: ${passed} passed, ${failed} failed ===`);
   console.log(`MerkleRootStore: ${merkleRootStoreAddress}`);
+  console.log(`VoteRegistry:    ${voteRegistryAddress}`);
   console.log(`BallotContract:  ${ballotAddress}`);
   console.log(`Election ID:     ${electionIdForUat}`);
   console.log(`Admin:           ${adminAddress}`);

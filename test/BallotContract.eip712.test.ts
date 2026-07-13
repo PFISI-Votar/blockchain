@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
-import { BallotContract, MerkleRootStore } from "../typechain-types";
+import { BallotContract, MerkleRootStore, VoteRegistry } from "../typechain-types";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import {
   buildPadronMerkleTree,
@@ -44,8 +44,10 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
   const VOTER_HASH = hashVotante(VOTER_DNI, VOTER_EMAIL);
   const VOTER_LEAF = toBytes32Hex(VOTER_HASH);
   const TIMESTAMP = 1_700_000_000n;
+  const CANDIDATE_ID = 101n;
 
   let store: MerkleRootStore;
+  let registry: VoteRegistry;
   let ballot: BallotContract;
   let admin: HardhatEthersSigner;
   let merkleUpdater: HardhatEthersSigner;
@@ -54,6 +56,8 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
   let validProof: string[];
   let nullifier: string;
   let selectionHash: string;
+  let VOTO_BLANCO: bigint;
+  let VOTO_NULO: bigint;
 
   async function deployFixture() {
     const [admin, merkleUpdater, ephemeralSigner, voter] = await ethers.getSigners();
@@ -62,9 +66,21 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
     const store = await storeFactory.deploy(admin.address);
     await store.waitForDeployment();
 
+    const registryFactory = await ethers.getContractFactory("VoteRegistry");
+    const registry = await registryFactory.deploy(admin.address);
+    await registry.waitForDeployment();
+
     const ballotFactory = await ethers.getContractFactory("BallotContract");
-    const ballot = await ballotFactory.deploy(admin.address, await store.getAddress());
+    const ballot = await ballotFactory.deploy(
+      admin.address,
+      await store.getAddress(),
+      await registry.getAddress(),
+    );
     await ballot.waitForDeployment();
+
+    await registry
+      .connect(admin)
+      .grantRole(await registry.BALLOT_ROLE(), await ballot.getAddress());
 
     await store.connect(admin).grantRole(await store.MERKLE_UPDATER_ROLE(), merkleUpdater.address);
     await store.connect(admin).grantRole(await store.ELECTION_ADMIN_ROLE(), admin.address);
@@ -96,8 +112,12 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
       ],
     });
 
+    const VOTO_BLANCO = await registry.VOTO_BLANCO();
+    const VOTO_NULO = await registry.VOTO_NULO();
+
     return {
       store,
+      registry,
       ballot,
       admin,
       merkleUpdater,
@@ -106,6 +126,8 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
       validProof,
       nullifier,
       selectionHash,
+      VOTO_BLANCO,
+      VOTO_NULO,
     };
   }
 
@@ -138,6 +160,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
   beforeEach(async () => {
     ({
       store,
+      registry,
       ballot,
       admin,
       merkleUpdater,
@@ -146,6 +169,8 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
       validProof,
       nullifier,
       selectionHash,
+      VOTO_BLANCO,
+      VOTO_NULO,
     } = await loadFixture(deployFixture));
   });
 
@@ -174,6 +199,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
+            CANDIDATE_ID,
           ),
       ).to.be.revertedWithCustomError(ballot, "InvalidSignature");
     });
@@ -195,6 +221,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
+            CANDIDATE_ID,
           ),
       ).to.emit(ballot, "SignedVoteCast");
 
@@ -210,6 +237,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
+            CANDIDATE_ID,
           ),
       ).to.be.revertedWithCustomError(ballot, "NullifierAlreadyUsed");
     });
@@ -231,13 +259,17 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
+            CANDIDATE_ID,
           ),
       )
         .to.emit(ballot, "SignedVoteCast")
-        .withArgs(ELECTION_ID, VOTER_LEAF, nullifier, selectionHash, ephemeralSigner.address);
+        .withArgs(ELECTION_ID, VOTER_LEAF, nullifier, selectionHash, ephemeralSigner.address)
+        .and.to.emit(registry, "VoteCast")
+        .withArgs(ELECTION_ID, nullifier, CANDIDATE_ID, false);
 
       expect(await ballot.hasVoted(ELECTION_ID, VOTER_LEAF)).to.equal(true);
       expect(await ballot.isNullifierUsed(ELECTION_ID, nullifier)).to.equal(true);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_ID)).to.equal(1n);
     });
 
     it("reverts InvalidSignature when recovered signer does not match expectedSigner", async () => {
@@ -256,6 +288,7 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
             TIMESTAMP,
             voter.address,
             signature,
+            CANDIDATE_ID,
           ),
       ).to.be.revertedWithCustomError(ballot, "InvalidSignature");
     });
@@ -285,8 +318,57 @@ describe("BallotContract — VOTAR-357 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
+            CANDIDATE_ID,
           ),
       ).to.emit(ballot, "SignedVoteCast");
+    });
+
+    it("emits VoteCast with reserved VOTO_BLANCO id for blank ballots", async () => {
+      const blankHash = computeSelectionHash({ votoEnBlanco: true, selecciones: [] });
+      const signature = await signVote(ephemeralSigner, { selectionHash: blankHash });
+
+      await expect(
+        ballot
+          .connect(voter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            validProof,
+            nullifier,
+            blankHash,
+            TIMESTAMP,
+            ephemeralSigner.address,
+            signature,
+            VOTO_BLANCO,
+          ),
+      )
+        .to.emit(registry, "VoteCast")
+        .withArgs(ELECTION_ID, nullifier, VOTO_BLANCO, false);
+
+      expect(await registry.getTally(ELECTION_ID, VOTO_BLANCO)).to.equal(1n);
+    });
+
+    it("emits VoteCast with reserved VOTO_NULO id for null ballots", async () => {
+      const nullHash = computeSelectionHash({ votoNulo: true, selecciones: [] });
+      const signature = await signVote(ephemeralSigner, { selectionHash: nullHash });
+
+      await expect(
+        ballot
+          .connect(voter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            validProof,
+            nullifier,
+            nullHash,
+            TIMESTAMP,
+            ephemeralSigner.address,
+            signature,
+            VOTO_NULO,
+          ),
+      )
+        .to.emit(registry, "VoteCast")
+        .withArgs(ELECTION_ID, nullifier, VOTO_NULO, false);
     });
   });
 });

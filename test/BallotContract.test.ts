@@ -4,7 +4,7 @@ import {
   loadFixture,
   time,
 } from "@nomicfoundation/hardhat-toolbox/network-helpers";
-import { BallotContract, MerkleRootStore } from "../typechain-types";
+import { BallotContract, MerkleRootStore, VoteRegistry } from "../typechain-types";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import {
   buildPadronMerkleTree,
@@ -19,6 +19,7 @@ describe("BallotContract — US-339 UATs", () => {
   const VOTER_EMAIL = "bruno@frvm.utn.edu.ar";
   const VOTER_HASH = hashVotante(VOTER_DNI, VOTER_EMAIL);
   const VOTER_LEAF = toBytes32Hex(VOTER_HASH);
+  const CANDIDATE_ID = 101n;
   const ElectionState = {
     DRAFT: 0,
     CONFIGURED: 1,
@@ -28,6 +29,7 @@ describe("BallotContract — US-339 UATs", () => {
   };
 
   let store: MerkleRootStore;
+  let registry: VoteRegistry;
   let ballot: BallotContract;
   let admin: HardhatEthersSigner;
   let merkleUpdater: HardhatEthersSigner;
@@ -57,9 +59,21 @@ describe("BallotContract — US-339 UATs", () => {
     const store = await storeFactory.deploy(admin.address);
     await store.waitForDeployment();
 
+    const registryFactory = await ethers.getContractFactory("VoteRegistry");
+    const registry = await registryFactory.deploy(admin.address);
+    await registry.waitForDeployment();
+
     const ballotFactory = await ethers.getContractFactory("BallotContract");
-    const ballot = await ballotFactory.deploy(admin.address, await store.getAddress());
+    const ballot = await ballotFactory.deploy(
+      admin.address,
+      await store.getAddress(),
+      await registry.getAddress(),
+    );
     await ballot.waitForDeployment();
+
+    await registry
+      .connect(admin)
+      .grantRole(await registry.BALLOT_ROLE(), await ballot.getAddress());
 
     await store.connect(admin).grantRole(await store.MERKLE_UPDATER_ROLE(), merkleUpdater.address);
     await store.connect(admin).grantRole(await store.ELECTION_ADMIN_ROLE(), admin.address);
@@ -79,6 +93,7 @@ describe("BallotContract — US-339 UATs", () => {
 
     return {
       store,
+      registry,
       ballot,
       admin,
       merkleUpdater,
@@ -93,6 +108,7 @@ describe("BallotContract — US-339 UATs", () => {
   beforeEach(async () => {
     ({
       store,
+      registry,
       ballot,
       admin,
       merkleUpdater,
@@ -112,8 +128,9 @@ describe("BallotContract — US-339 UATs", () => {
         ? `${original.slice(0, -1)}b`
         : `${original.slice(0, -1)}a`;
 
-      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, tamperedProof))
-        .to.be.revertedWithCustomError(ballot, "InvalidMerkleProof");
+      await expect(
+        ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, tamperedProof, CANDIDATE_ID),
+      ).to.be.revertedWithCustomError(ballot, "InvalidMerkleProof");
 
       expect(await ballot.hasVoted(ELECTION_ID, VOTER_LEAF)).to.equal(false);
     });
@@ -130,18 +147,22 @@ describe("BallotContract — US-339 UATs", () => {
         foreignIndex,
       );
 
-      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, foreignProof))
-        .to.be.revertedWithCustomError(ballot, "InvalidMerkleProof");
+      await expect(
+        ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, foreignProof, CANDIDATE_ID),
+      ).to.be.revertedWithCustomError(ballot, "InvalidMerkleProof");
     });
   });
 
   describe("UAT-02: procesamiento exitoso con prueba legítima", () => {
-    it("records the vote and emits VoteCast when Merkle proof is valid", async () => {
-      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
-        .to.emit(ballot, "VoteCast")
-        .withArgs(ELECTION_ID, VOTER_LEAF, voter.address);
+    it("records the vote and emits VoteCast via VoteRegistry when Merkle proof is valid", async () => {
+      await expect(
+        ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof, CANDIDATE_ID),
+      )
+        .to.emit(registry, "VoteCast")
+        .withArgs(ELECTION_ID, VOTER_LEAF, CANDIDATE_ID, false);
 
       expect(await ballot.hasVoted(ELECTION_ID, VOTER_LEAF)).to.equal(true);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_ID)).to.equal(1n);
     });
   });
 
@@ -150,7 +171,9 @@ describe("BallotContract — US-339 UATs", () => {
       const unpublishedElectionId = 999n;
       await openElectionWindow(store, admin, unpublishedElectionId);
       await expect(
-        ballot.connect(voter).castVote(unpublishedElectionId, VOTER_LEAF, validProof),
+        ballot
+          .connect(voter)
+          .castVote(unpublishedElectionId, VOTER_LEAF, validProof, CANDIDATE_ID),
       )
         .to.be.revertedWithCustomError(ballot, "MerkleRootNotPublished")
         .withArgs(unpublishedElectionId);
@@ -161,8 +184,9 @@ describe("BallotContract — US-339 UATs", () => {
       await ballot.connect(admin).grantRole(PAUSER_ROLE, admin.address);
       await ballot.connect(admin).pause();
 
-      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
-        .to.be.revertedWithCustomError(ballot, "EnforcedPause");
+      await expect(
+        ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof, CANDIDATE_ID),
+      ).to.be.revertedWithCustomError(ballot, "EnforcedPause");
     });
 
     it("reads the anchored root from MerkleRootStore", async () => {
@@ -175,7 +199,9 @@ describe("BallotContract — US-339 UATs", () => {
     it("reverts ElectionClosed when election state is CLOSED (manual close)", async () => {
       await store.connect(admin).setElectionState(ELECTION_ID, ElectionState.CLOSED);
 
-      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
+      await expect(
+        ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof, CANDIDATE_ID),
+      )
         .to.be.revertedWithCustomError(ballot, "ElectionClosed")
         .withArgs(ELECTION_ID);
     });
@@ -184,7 +210,9 @@ describe("BallotContract — US-339 UATs", () => {
       const endTime = await store.getElectionEndTime(ELECTION_ID);
       await time.increaseTo(endTime);
 
-      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
+      await expect(
+        ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof, CANDIDATE_ID),
+      )
         .to.be.revertedWithCustomError(ballot, "ElectionClosed")
         .withArgs(ELECTION_ID);
     });
@@ -194,9 +222,30 @@ describe("BallotContract — US-339 UATs", () => {
         .connect(admin)
         .setElectionState(ELECTION_ID, ElectionState.CONFIGURED);
 
-      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
+      await expect(
+        ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof, CANDIDATE_ID),
+      )
         .to.be.revertedWithCustomError(ballot, "ElectionClosed")
         .withArgs(ELECTION_ID);
+    });
+  });
+
+  describe("VOTAR-346 — privacy of VoteCast", () => {
+    it("does not index the submitting wallet address on VoteCast", async () => {
+      const tx = await ballot
+        .connect(voter)
+        .castVote(ELECTION_ID, VOTER_LEAF, validProof, CANDIDATE_ID);
+      const receipt = await tx.wait();
+      expect(receipt).to.not.equal(null);
+
+      const voteCastTopic = registry.interface.getEvent("VoteCast")!.topicHash;
+      const voteCastLog = receipt!.logs.find((log) => log.topics[0] === voteCastTopic);
+      expect(voteCastLog).to.not.equal(undefined);
+
+      // topics[0]=sig, topics[1]=electionId, topics[2]=voterHash — no address topic
+      expect(voteCastLog!.topics.length).to.equal(3);
+      const voterAddressTopic = ethers.zeroPadValue(voter.address, 32).toLowerCase();
+      expect(voteCastLog!.topics.map((t) => t.toLowerCase())).to.not.include(voterAddressTopic);
     });
   });
 });

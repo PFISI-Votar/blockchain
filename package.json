@@ -13,8 +13,10 @@
     "deploy:sepolia": "hardhat run scripts/deploy.ts --network sepolia",
     "deploy:merkle-store:sepolia": "hardhat run scripts/deploy-merkle-root-store.ts --network sepolia",
     "deploy:ballot:sepolia": "hardhat run scripts/deploy-ballot-contract.ts --network sepolia",
+    "deploy:registry:sepolia": "hardhat run scripts/deploy-vote-registry.ts --network sepolia",
     "uat:335:sepolia": "hardhat run scripts/sepolia-uat-335.ts --network sepolia",
-    "uat:339:sepolia": "hardhat run scripts/sepolia-uat-339.ts --network sepolia"
+    "uat:339:sepolia": "hardhat run scripts/sepolia-uat-339.ts --network sepolia",
+    "audit:votecast": "hardhat run scripts/audit-votecast.ts"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",

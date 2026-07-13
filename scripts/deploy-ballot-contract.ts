@@ -1,11 +1,12 @@
 import { ethers, network } from "hardhat";
 
 /**
- * Deploys BallotContract wired to an existing or freshly deployed MerkleRootStore.
+ * Deploys BallotContract wired to MerkleRootStore + VoteRegistry.
  */
 async function main() {
   let admin = process.env.ADMIN_MULTISIG_ADDRESS;
   let merkleRootStoreAddress = process.env.MERKLE_ROOT_STORE_ADDRESS;
+  let voteRegistryAddress = process.env.VOTE_REGISTRY_ADDRESS;
 
   if (!admin) {
     if (network.name === "hardhat") {
@@ -40,15 +41,39 @@ async function main() {
     }
   }
 
+  if (!voteRegistryAddress || !ethers.isAddress(voteRegistryAddress)) {
+    const registryFactory = await ethers.getContractFactory("VoteRegistry");
+    const registry = await registryFactory.deploy(admin);
+    await registry.waitForDeployment();
+    voteRegistryAddress = await registry.getAddress();
+    console.log(`[deploy] VoteRegistry deployed at: ${voteRegistryAddress}`);
+  }
+
   const factory = await ethers.getContractFactory("BallotContract");
-  const contract = await factory.deploy(admin, merkleRootStoreAddress);
+  const contract = await factory.deploy(
+    admin,
+    merkleRootStoreAddress,
+    voteRegistryAddress,
+  );
   await contract.waitForDeployment();
 
   const address = await contract.getAddress();
+
+  const registry = await ethers.getContractAt("VoteRegistry", voteRegistryAddress);
+  const ballotRole = await registry.BALLOT_ROLE();
+  const hasBallotRole = await registry.hasRole(ballotRole, address);
+  if (!hasBallotRole) {
+    const grantTx = await registry.grantRole(ballotRole, address);
+    await grantTx.wait();
+    console.log(`[deploy] Granted BALLOT_ROLE on VoteRegistry to ${address}`);
+  }
+
   console.log(`[deploy] BallotContract deployed at: ${address}`);
   console.log(`[deploy] MerkleRootStore:            ${merkleRootStoreAddress}`);
+  console.log(`[deploy] VoteRegistry:               ${voteRegistryAddress}`);
   console.log(`[deploy] DEFAULT_ADMIN_ROLE granted to: ${admin}`);
   console.log(`[deploy] Set BALLOT_CONTRACT_ADDRESS=${address} in backend .env`);
+  console.log(`[deploy] Set VOTE_REGISTRY_ADDRESS=${voteRegistryAddress} in backend .env`);
 }
 
 main().catch((error) => {
