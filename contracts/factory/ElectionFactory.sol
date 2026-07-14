@@ -3,17 +3,20 @@ pragma solidity ^0.8.24;
 
 import {VotarAccessControl} from "../access/VotarAccessControl.sol";
 import {MerkleRootStore} from "../merkle/MerkleRootStore.sol";
+import {VoteRegistry} from "../registry/VoteRegistry.sol";
 import {BallotContract} from "../ballot/BallotContract.sol";
+import {AuditViewContract} from "../audit/AuditViewContract.sol";
 
 /**
  * @title ElectionFactory
- * @notice Master factory that deploys a per-election {BallotContract} on demand.
+ * @notice Master factory that deploys a per-election contract set (VoteRegistry,
+ *         BallotContract, AuditViewContract) on demand.
  * @dev VOTAR-337 — Standardised infrastructure for creating comicios.
  *
- *      Architecture (C4 Sprint 3) describes a UUPS Proxy Factory that also spins
- *      VoteRegistry / Tally / AuditView. Those contracts are not yet on `dev`; this
- *      factory therefore deploys a fresh {BallotContract} via `CREATE` and freezes
- *      {RevoteConfig} for off-chain lifecycle / future on-chain wiring.
+ *      Architecture (C4 Sprint 3) describes a UUPS Proxy Factory. Current electoral
+ *      contracts are non-upgradeable; this factory therefore deploys fresh instances
+ *      via `CREATE`. Upgradeable proxies can replace this path later without changing
+ *      the off-chain registration of the factory address/ABI.
  *
  *      `MerkleRootStore` remains a shared global address until per-comicio stores
  *      are introduced (see DER note US-335 → US-337).
@@ -39,18 +42,26 @@ contract ElectionFactory is VotarAccessControl {
 
     struct ElectionDeployment {
         address ballot;
+        address voteRegistry;
+        address auditView;
         RevoteConfig revoteConfig;
         bool exists;
     }
 
-    /// @notice Multisig/Governor that receives DEFAULT_ADMIN_ROLE on child ballots.
+    /// @notice Multisig/Governor that receives DEFAULT_ADMIN_ROLE on child contracts.
     address public immutable admin;
 
     /// @notice Shared Merkle root store used by every BallotContract instance.
     MerkleRootStore public immutable merkleRootStore;
 
-    /// @notice Emitted when a BallotContract is deployed for an election.
-    event ElectionCreated(uint256 indexed electionId, address ballot, RevoteConfig revoteConfig);
+    /// @notice Emitted when a full election stack is deployed.
+    event ElectionCreated(
+        uint256 indexed electionId,
+        address ballot,
+        address voteRegistry,
+        address auditView,
+        RevoteConfig revoteConfig
+    );
 
     error ElectionAlreadyExists(uint256 electionId);
     error MerkleRootStoreIsZeroAddress();
@@ -59,7 +70,7 @@ contract ElectionFactory is VotarAccessControl {
     uint256[] private _electionIds;
 
     /**
-     * @param admin_ Multisig/Governor — DEFAULT_ADMIN_ROLE on this factory and ballots.
+     * @param admin_ Multisig/Governor — DEFAULT_ADMIN_ROLE on this factory and children.
      * @param merkleRootStoreAddress Shared {MerkleRootStore} used by new ballots.
      */
     constructor(address admin_, address merkleRootStoreAddress) VotarAccessControl(admin_) {
@@ -69,28 +80,47 @@ contract ElectionFactory is VotarAccessControl {
     }
 
     /**
-     * @notice Deploys a BallotContract for `electionId` and freezes its RevoteConfig.
+     * @notice Deploys VoteRegistry + BallotContract + AuditView for `electionId`.
      * @param electionId Off-chain election identifier (`id_eleccion`).
      * @param revoteConfig Revote / tally policy frozen at creation.
      * @return ballot Address of the new BallotContract.
+     * @return voteRegistry Address of the new VoteRegistry.
+     * @return auditView Address of the new AuditViewContract.
      */
     function createElection(uint256 electionId, RevoteConfig calldata revoteConfig)
         external
         onlyRole(DEFAULT_ADMIN_ROLE)
         whenNotPaused
-        returns (address ballot)
+        returns (address ballot, address voteRegistry, address auditView)
     {
         if (_deployments[electionId].exists) revert ElectionAlreadyExists(electionId);
 
-        BallotContract ballotContract = new BallotContract(admin, address(merkleRootStore));
+        // Factory is temporary admin of VoteRegistry so it can grant BALLOT_ROLE
+        // atomically, then transfers DEFAULT_ADMIN_ROLE to the Multisig.
+        VoteRegistry registry = new VoteRegistry(address(this));
+        BallotContract ballotContract =
+            new BallotContract(admin, address(merkleRootStore), address(registry));
+        AuditViewContract audit =
+            new AuditViewContract(address(merkleRootStore), address(registry));
+
+        registry.grantRole(registry.BALLOT_ROLE(), address(ballotContract));
+        registry.grantRole(DEFAULT_ADMIN_ROLE, admin);
+        registry.renounceRole(DEFAULT_ADMIN_ROLE, address(this));
+
         ballot = address(ballotContract);
+        voteRegistry = address(registry);
+        auditView = address(audit);
 
         _deployments[electionId] = ElectionDeployment({
-            ballot: ballot, revoteConfig: revoteConfig, exists: true
+            ballot: ballot,
+            voteRegistry: voteRegistry,
+            auditView: auditView,
+            revoteConfig: revoteConfig,
+            exists: true
         });
         _electionIds.push(electionId);
 
-        emit ElectionCreated(electionId, ballot, revoteConfig);
+        emit ElectionCreated(electionId, ballot, voteRegistry, auditView, revoteConfig);
     }
 
     /// @notice Returns deployment metadata for an election, if created.

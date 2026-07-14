@@ -68,12 +68,15 @@ describe("ElectionFactory — VOTAR-337", () => {
   });
 
   describe("createElection", () => {
-    it("deploys a BallotContract and emits ElectionCreated", async () => {
+    it("deploys ballot, registry and audit view and emits ElectionCreated", async () => {
       await expect(factory.connect(admin).createElection(ELECTION_ID, DEFAULT_REVOTE))
         .to.emit(factory, "ElectionCreated")
         .withArgs(
           ELECTION_ID,
           (ballot: string) => ethers.isAddress(ballot) && ballot !== ethers.ZeroAddress,
+          (registry: string) =>
+            ethers.isAddress(registry) && registry !== ethers.ZeroAddress,
+          (audit: string) => ethers.isAddress(audit) && audit !== ethers.ZeroAddress,
           (config: {
             enabled: boolean;
             maxVotesPerVoter: bigint;
@@ -89,22 +92,41 @@ describe("ElectionFactory — VOTAR-337", () => {
       const deployment = await factory.getElection(ELECTION_ID);
       expect(deployment.exists).to.equal(true);
       expect(deployment.ballot).to.properAddress;
+      expect(deployment.voteRegistry).to.properAddress;
+      expect(deployment.auditView).to.properAddress;
       expect(deployment.revoteConfig.enabled).to.equal(true);
       expect(deployment.revoteConfig.maxVotesPerVoter).to.equal(3);
       expect(await factory.electionCount()).to.equal(1n);
       expect(await factory.electionIdAt(0)).to.equal(ELECTION_ID);
     });
 
-    it("wires BallotContract to shared MerkleRootStore with Multisig admin", async () => {
+    it("wires BallotContract to shared MerkleRootStore and grants BALLOT_ROLE", async () => {
       await factory.connect(admin).createElection(ELECTION_ID, DEFAULT_REVOTE);
       const deployment = await factory.getElection(ELECTION_ID);
 
       const ballot = await ethers.getContractAt("BallotContract", deployment.ballot);
+      const registry = await ethers.getContractAt(
+        "VoteRegistry",
+        deployment.voteRegistry,
+      );
+
       expect(await ballot.merkleRootStore()).to.equal(
         await merkleStore.getAddress(),
       );
+      expect(await ballot.voteRegistry()).to.equal(deployment.voteRegistry);
       expect(await ballot.hasRole(await ballot.DEFAULT_ADMIN_ROLE(), admin.address))
         .to.equal(true);
+
+      const ballotRole = await registry.BALLOT_ROLE();
+      expect(await registry.hasRole(ballotRole, deployment.ballot)).to.equal(true);
+      expect(await registry.hasRole(await registry.DEFAULT_ADMIN_ROLE(), admin.address))
+        .to.equal(true);
+      expect(
+        await registry.hasRole(
+          await registry.DEFAULT_ADMIN_ROLE(),
+          await factory.getAddress(),
+        ),
+      ).to.equal(false);
     });
 
     it("reverts when electionId already exists", async () => {

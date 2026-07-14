@@ -4,6 +4,8 @@
 
 Automatizar el despliegue del contrato maestro `ElectionFactory` en Sepolia, verificar el código fuente en Etherscan y registrar dirección + ABI en PostgreSQL (NestJS) para llamadas dinámicas.
 
+`createElection` despliega por comicio: `VoteRegistry` + `BallotContract` + `AuditViewContract`, cableados al `MerkleRootStore` compartido.
+
 ## Prerrequisitos
 
 1. `MERKLE_ROOT_STORE_ADDRESS` ya desplegado (US-335).

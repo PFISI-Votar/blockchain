@@ -76,10 +76,24 @@ async function main() {
   await contract.waitForDeployment();
   const contractAddress = await contract.getAddress();
 
+  const registryFactory = await ethers.getContractFactory("VoteRegistry");
+  const registry = await registryFactory.deploy(admin.address);
+  await registry.waitForDeployment();
+  const registryAddress = await registry.getAddress();
+
   const ballotFactory = await ethers.getContractFactory("BallotContract");
-  const ballot = await ballotFactory.deploy(admin.address, contractAddress);
+  const ballot = await ballotFactory.deploy(
+    admin.address,
+    contractAddress,
+    registryAddress,
+  );
   await ballot.waitForDeployment();
   const ballotAddress = await ballot.getAddress();
+
+  const auditFactory = await ethers.getContractFactory("AuditViewContract");
+  const auditView = await auditFactory.deploy(contractAddress, registryAddress);
+  await auditView.waitForDeployment();
+  const auditViewAddress = await auditView.getAddress();
 
   // VOTAR-337 — ElectionFactory (master) wired to the shared MerkleRootStore.
   const electionFactoryFactory =
@@ -90,6 +104,18 @@ async function main() {
   );
   await electionFactory.waitForDeployment();
   const electionFactoryAddress = await electionFactory.getAddress();
+
+  const ballotRole = await registry.BALLOT_ROLE();
+  const hasBallotRole = await registry.hasRole(ballotRole, ballotAddress);
+  if (!hasBallotRole) {
+    console.log(
+      `[deploy-local] Otorgando BALLOT_ROLE a BallotContract ${ballotAddress}...`,
+    );
+    const grantBallotTx = await registry
+      .connect(admin)
+      .grantRole(ballotRole, ballotAddress);
+    await grantBallotTx.wait();
+  }
 
   const merkleUpdaterRole = await contract.MERKLE_UPDATER_ROLE();
   const hasRole = await contract.hasRole(
@@ -113,6 +139,8 @@ async function main() {
     {
       SEPOLIA_RPC_URL: "http://127.0.0.1:8545",
       MERKLE_ROOT_STORE_ADDRESS: contractAddress,
+      VOTE_REGISTRY_ADDRESS: registryAddress,
+      AUDIT_VIEW_ADDRESS: auditViewAddress,
       BALLOT_CONTRACT_ADDRESS: ballotAddress,
       ELECTION_FACTORY_ADDRESS: electionFactoryAddress,
       MERKLE_UPDATER_PRIVATE_KEY: HARDHAT_ACCOUNT_1_PRIVATE_KEY,
@@ -131,6 +159,8 @@ async function main() {
       VITE_RPC_URL: "http://127.0.0.1:8545",
       VITE_CHAIN_ID: chainId,
       VITE_BALLOT_CONTRACT_ADDRESS: ballotAddress,
+      VITE_VOTE_REGISTRY_ADDRESS: registryAddress,
+      VITE_AUDIT_VIEW_ADDRESS: auditViewAddress,
       // Hardhat account #0 — pays gas for castSignedVote (local/testnet only)
       VITE_VOTE_TRANSMITTER_PRIVATE_KEY:
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
@@ -144,7 +174,9 @@ async function main() {
   );
 
   console.log(`[deploy-local] MerkleRootStore: ${contractAddress}`);
+  console.log(`[deploy-local] VoteRegistry:    ${registryAddress}`);
   console.log(`[deploy-local] BallotContract:  ${ballotAddress}`);
+  console.log(`[deploy-local] AuditView:       ${auditViewAddress}`);
   console.log(`[deploy-local] ElectionFactory: ${electionFactoryAddress}`);
   console.log(`[deploy-local] DEFAULT_ADMIN_ROLE: ${admin.address}`);
   console.log(`[deploy-local] MERKLE_UPDATER_ROLE: ${merkleUpdater.address}`);

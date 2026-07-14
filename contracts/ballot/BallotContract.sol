@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {VotarAccessControl} from "../access/VotarAccessControl.sol";
 import {MerkleRootStore} from "../merkle/MerkleRootStore.sol";
+import {VoteRegistry} from "../registry/VoteRegistry.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
@@ -15,25 +16,31 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  *      VOTAR-357 — EIP-712 signed ballot with domain separator and nullifier
  *      replay protection. Leaf encoding matches backend StandardMerkleTree (['bytes32']).
  *      VOTAR-321 — Rejects votes when election is CLOSED or past endTime (`ElectionClosed`).
+ *      VOTAR-346 — Delegates audit `VoteCast` to {VoteRegistry} using nullifier as
+ *      anonymous `voterHash`. `SignedVoteCast` is the receipt event and MUST NOT
+ *      include `voterLeaf`, so leaf↔nullifier↔candidateId cannot be joined on-chain.
+ *      `candidateId` is bound in the EIP-712 Vote digest (integrity of audit tallies).
  *
  *      The nullifier value is produced off-chain by VOTAR-353 and included in the
  *      signed Vote struct; this contract only verifies the EIP-712 signature and
  *      rejects reuse (UAT-03). It does NOT derive or validate nullifier semantics.
- *      LAST_VOTE_WINS overwrite requires VoteRegistry (future US).
+ *      LAST_VOTE_WINS via castSignedVote is deferred to VOTAR-344 (nullifier one-shot here).
  */
 contract BallotContract is VotarAccessControl, EIP712 {
     MerkleRootStore public immutable merkleRootStore;
+    VoteRegistry public immutable voteRegistry;
 
-    bytes32 private constant VOTE_TYPEHASH =
-        keccak256("Vote(uint256 electionId,bytes32 nullifier,bytes32 selectionHash,uint256 timestamp)");
+    bytes32 private constant VOTE_TYPEHASH = keccak256(
+        "Vote(uint256 electionId,bytes32 nullifier,bytes32 selectionHash,uint256 candidateId,uint256 timestamp)"
+    );
 
-    /// @notice Emitted when a vote passes Merkle validation and is recorded.
-    event VoteCast(uint256 indexed electionId, bytes32 indexed voterLeaf, address indexed voter);
-
-    /// @notice Emitted when a signed vote passes Merkle + EIP-712 validation.
+    /**
+     * @notice Receipt event for a successful signed vote.
+     * @dev Intentionally omits `voterLeaf` so public logs cannot join padron identity
+     *      to the anonymous nullifier / VoteCast preference (VOTAR-346 privacy).
+     */
     event SignedVoteCast(
         uint256 indexed electionId,
-        bytes32 indexed voterLeaf,
         bytes32 indexed nullifier,
         bytes32 selectionHash,
         address signer
@@ -42,6 +49,7 @@ contract BallotContract is VotarAccessControl, EIP712 {
     error InvalidMerkleProof();
     error MerkleRootNotPublished(uint256 electionId);
     error MerkleRootStoreIsZeroAddress();
+    error VoteRegistryIsZeroAddress();
     error NullifierAlreadyUsed(bytes32 nullifier);
     error InvalidSignature();
     /// @notice Thrown when the election is CLOSED/TALLIED or `block.timestamp` >= endTime.
@@ -50,26 +58,30 @@ contract BallotContract is VotarAccessControl, EIP712 {
     mapping(uint256 electionId => mapping(bytes32 voterLeaf => bool hasVoted)) private _hasVoted;
     mapping(uint256 electionId => mapping(bytes32 nullifier => bool used)) private _nullifierUsed;
 
-    constructor(address admin, address merkleRootStoreAddress)
+    constructor(address admin, address merkleRootStoreAddress, address voteRegistryAddress)
         VotarAccessControl(admin)
         EIP712("VOTAR", "1")
     {
         if (merkleRootStoreAddress == address(0)) revert MerkleRootStoreIsZeroAddress();
+        if (voteRegistryAddress == address(0)) revert VoteRegistryIsZeroAddress();
         merkleRootStore = MerkleRootStore(merkleRootStoreAddress);
+        voteRegistry = VoteRegistry(voteRegistryAddress);
     }
 
     /**
-     * @notice Submits a vote intention after verifying Merkle membership.
-     * @param electionId Off-chain election identifier (id_eleccion).
-     * @param voterLeaf Keccak-256 hash of the voter identity (hash_hoja / PADRON_VOTANTE).
-     * @param merkleProof Sibling hashes from the StandardMerkleTree proof path.
+     * @notice Legacy Merkle-eligibility path (US-339). Does NOT write {VoteRegistry}.
+     * @dev Public audit `VoteCast` requires an anonymous nullifier; feeding `voterLeaf`
+     *      as `voterHash` would create an identity↔preference FK. Production votes MUST
+     *      use {castSignedVote}.
      */
-    function castVote(uint256 electionId, bytes32 voterLeaf, bytes32[] calldata merkleProof) external whenNotPaused {
+    function castVote(uint256 electionId, bytes32 voterLeaf, bytes32[] calldata merkleProof)
+        external
+        whenNotPaused
+    {
         _assertElectionAcceptingVotes(electionId);
         _assertValidMerkleProof(electionId, voterLeaf, merkleProof);
 
         _hasVoted[electionId][voterLeaf] = true;
-        emit VoteCast(electionId, voterLeaf, msg.sender);
     }
 
     /**
@@ -82,6 +94,7 @@ contract BallotContract is VotarAccessControl, EIP712 {
      * @param timestamp Unix timestamp captured at signing time on the client.
      * @param expectedSigner Ethereum address derived from the ephemeral session key.
      * @param signature ECDSA signature over the EIP-712 typed data digest.
+     * @param candidateId Audit candidate id (or reserved blanco/nulo), bound in the digest.
      */
     function castSignedVote(
         uint256 electionId,
@@ -91,25 +104,20 @@ contract BallotContract is VotarAccessControl, EIP712 {
         bytes32 selectionHash,
         uint256 timestamp,
         address expectedSigner,
-        bytes calldata signature
+        bytes calldata signature,
+        uint256 candidateId
     ) external whenNotPaused {
         _assertElectionAcceptingVotes(electionId);
         _assertValidMerkleProof(electionId, voterLeaf, merkleProof);
+        _consumeNullifier(electionId, nullifier);
+        _assertValidVoteSignature(
+            electionId, nullifier, selectionHash, candidateId, timestamp, expectedSigner, signature
+        );
 
-        if (_nullifierUsed[electionId][nullifier]) {
-            revert NullifierAlreadyUsed(nullifier);
-        }
-
-        bytes32 structHash = keccak256(abi.encode(VOTE_TYPEHASH, electionId, nullifier, selectionHash, timestamp));
-        bytes32 digest = _hashTypedDataV4(structHash);
-        address signer = ECDSA.recover(digest, signature);
-        if (signer == address(0) || signer != expectedSigner) {
-            revert InvalidSignature();
-        }
-
-        _nullifierUsed[electionId][nullifier] = true;
         _hasVoted[electionId][voterLeaf] = true;
-        emit SignedVoteCast(electionId, voterLeaf, nullifier, selectionHash, expectedSigner);
+        // voterHash for audit = nullifier (anonymous anchor, not wallet / leaf).
+        voteRegistry.recordVote(electionId, nullifier, candidateId);
+        emit SignedVoteCast(electionId, nullifier, selectionHash, expectedSigner);
     }
 
     /// @notice Returns whether a voter leaf has successfully cast a vote on-chain.
@@ -125,6 +133,31 @@ contract BallotContract is VotarAccessControl, EIP712 {
     /// @notice Exposes the EIP-712 domain separator for off-chain signing clients.
     function domainSeparator() external view returns (bytes32) {
         return _domainSeparatorV4();
+    }
+
+    function _consumeNullifier(uint256 electionId, bytes32 nullifier) private {
+        if (_nullifierUsed[electionId][nullifier]) {
+            revert NullifierAlreadyUsed(nullifier);
+        }
+        _nullifierUsed[electionId][nullifier] = true;
+    }
+
+    function _assertValidVoteSignature(
+        uint256 electionId,
+        bytes32 nullifier,
+        bytes32 selectionHash,
+        uint256 candidateId,
+        uint256 timestamp,
+        address expectedSigner,
+        bytes calldata signature
+    ) private view {
+        bytes32 structHash = keccak256(
+            abi.encode(VOTE_TYPEHASH, electionId, nullifier, selectionHash, candidateId, timestamp)
+        );
+        address signer = ECDSA.recover(_hashTypedDataV4(structHash), signature);
+        if (signer == address(0) || signer != expectedSigner) {
+            revert InvalidSignature();
+        }
     }
 
     /**
