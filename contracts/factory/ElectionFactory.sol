@@ -74,6 +74,8 @@ contract ElectionFactory is VotarAccessControl {
      * @param merkleRootStoreAddress Shared {MerkleRootStore} used by new ballots.
      */
     constructor(address admin_, address merkleRootStoreAddress) VotarAccessControl(admin_) {
+        // Explicit zero-check (also enforced by {VotarAccessControl}) for Slither.
+        if (admin_ == address(0)) revert AdminIsZeroAddress();
         if (merkleRootStoreAddress == address(0)) revert MerkleRootStoreIsZeroAddress();
         admin = admin_;
         merkleRootStore = MerkleRootStore(merkleRootStoreAddress);
@@ -86,6 +88,9 @@ contract ElectionFactory is VotarAccessControl {
      * @return ballot Address of the new BallotContract.
      * @return voteRegistry Address of the new VoteRegistry.
      * @return auditView Address of the new AuditViewContract.
+     * @dev Follows checks-effects-interactions: storage + event are written before
+     *      role grants on the fresh VoteRegistry. Any revert on grant/renounce rolls
+     *      back the entire creation.
      */
     function createElection(uint256 electionId, RevoteConfig calldata revoteConfig)
         external
@@ -103,14 +108,11 @@ contract ElectionFactory is VotarAccessControl {
         AuditViewContract audit =
             new AuditViewContract(address(merkleRootStore), address(registry));
 
-        registry.grantRole(registry.BALLOT_ROLE(), address(ballotContract));
-        registry.grantRole(DEFAULT_ADMIN_ROLE, admin);
-        registry.renounceRole(DEFAULT_ADMIN_ROLE, address(this));
-
         ballot = address(ballotContract);
         voteRegistry = address(registry);
         auditView = address(audit);
 
+        // Effects before external role calls (CEI) — suppresses reentrancy-no-eth.
         _deployments[electionId] = ElectionDeployment({
             ballot: ballot,
             voteRegistry: voteRegistry,
@@ -119,8 +121,11 @@ contract ElectionFactory is VotarAccessControl {
             exists: true
         });
         _electionIds.push(electionId);
-
         emit ElectionCreated(electionId, ballot, voteRegistry, auditView, revoteConfig);
+
+        registry.grantRole(registry.BALLOT_ROLE(), address(ballotContract));
+        registry.grantRole(DEFAULT_ADMIN_ROLE, admin);
+        registry.renounceRole(DEFAULT_ADMIN_ROLE, address(this));
     }
 
     /// @notice Returns deployment metadata for an election, if created.
