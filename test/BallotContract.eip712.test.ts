@@ -68,7 +68,8 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
     await store.waitForDeployment();
 
     const registryFactory = await ethers.getContractFactory("VoteRegistry");
-    const registry = await registryFactory.deploy(admin.address);
+    // VOTAR-341 — default production policy: revote disabled.
+    const registry = await registryFactory.deploy(admin.address, false);
     await registry.waitForDeployment();
 
     const ballotFactory = await ethers.getContractFactory("BallotContract");
@@ -226,8 +227,8 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
     });
   });
 
-  describe("UAT-03: protección contra replay", () => {
-    it("reverts NullifierAlreadyUsed on duplicate signed vote submission", async () => {
+  describe("UAT-03: protección contra replay / unicidad sin revoto (VOTAR-341)", () => {
+    it("reverts RevoteDisabled on duplicate signed vote submission", async () => {
       const signature = await signVote(ephemeralSigner);
 
       await expect(
@@ -260,7 +261,87 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             signature,
             CANDIDATE_ID,
           ),
-      ).to.be.revertedWithCustomError(ballot, "NullifierAlreadyUsed");
+      ).to.be.revertedWithCustomError(ballot, "RevoteDisabled");
+    });
+  });
+
+  describe("VOTAR-341: control de unicidad sin re-voto", () => {
+    it("UAT-01 — bloquea el segundo voto con RevoteDisabled cuando revoto está apagado", async () => {
+      expect(await registry.revoteEnabled()).to.equal(false);
+
+      const signature = await signVote(ephemeralSigner);
+      await ballot
+        .connect(voter)
+        .castSignedVote(
+          ELECTION_ID,
+          VOTER_LEAF,
+          validProof,
+          nullifier,
+          selectionHash,
+          TIMESTAMP,
+          ephemeralSigner.address,
+          signature,
+          CANDIDATE_ID,
+        );
+
+      await expect(
+        ballot
+          .connect(voter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            validProof,
+            nullifier,
+            selectionHash,
+            TIMESTAMP,
+            ephemeralSigner.address,
+            signature,
+            CANDIDATE_ID,
+          ),
+      ).to.be.revertedWithCustomError(ballot, "RevoteDisabled");
+    });
+
+    it("UAT-02 — el tally no cambia tras un segundo intento fallido de doble voto", async () => {
+      const signature = await signVote(ephemeralSigner);
+      await ballot
+        .connect(voter)
+        .castSignedVote(
+          ELECTION_ID,
+          VOTER_LEAF,
+          validProof,
+          nullifier,
+          selectionHash,
+          TIMESTAMP,
+          ephemeralSigner.address,
+          signature,
+          CANDIDATE_ID,
+        );
+
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_ID)).to.equal(1n);
+      const [totalBefore] = await registry.getParticipationStats(ELECTION_ID);
+      expect(totalBefore).to.equal(1n);
+
+      await expect(
+        ballot
+          .connect(voter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            validProof,
+            nullifier,
+            selectionHash,
+            TIMESTAMP,
+            ephemeralSigner.address,
+            signature,
+            CANDIDATE_ID,
+          ),
+      ).to.be.revertedWithCustomError(ballot, "RevoteDisabled");
+
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_ID)).to.equal(1n);
+      const [totalAfter] = await registry.getParticipationStats(ELECTION_ID);
+      expect(totalAfter).to.equal(1n);
+      const [, hasVoted] = await registry.getVoterState(ELECTION_ID, nullifier);
+      expect(hasVoted).to.equal(true);
     });
   });
 

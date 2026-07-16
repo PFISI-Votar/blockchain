@@ -76,10 +76,13 @@ async function main() {
   await contract.waitForDeployment();
   const contractAddress = await contract.getAddress();
 
+  // VOTAR-341 — local default matches production: revote disabled.
+  const revoteEnabled = process.env.REVOTE_ENABLED === "true";
   const registryFactory = await ethers.getContractFactory("VoteRegistry");
-  const registry = await registryFactory.deploy(admin.address);
+  const registry = await registryFactory.deploy(admin.address, revoteEnabled);
   await registry.waitForDeployment();
   const registryAddress = await registry.getAddress();
+  console.log(`[deploy-local] VoteRegistry revoteEnabled=${revoteEnabled}`);
 
   const ballotFactory = await ethers.getContractFactory("BallotContract");
   const ballot = await ballotFactory.deploy(

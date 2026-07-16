@@ -59,7 +59,7 @@ describe("BallotContract — US-339 UATs", () => {
     await store.waitForDeployment();
 
     const registryFactory = await ethers.getContractFactory("VoteRegistry");
-    const registry = await registryFactory.deploy(admin.address);
+    const registry = await registryFactory.deploy(admin.address, false);
     await registry.waitForDeployment();
 
     const ballotFactory = await ethers.getContractFactory("BallotContract");

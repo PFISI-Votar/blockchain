@@ -43,7 +43,8 @@ describe("AuditViewContract — VOTAR-350 public view UATs", () => {
     await store.waitForDeployment();
 
     const registryFactory = await ethers.getContractFactory("VoteRegistry");
-    const registry = await registryFactory.deploy(admin.address);
+    // Audit overwrite scenarios need LAST_VOTE_WINS (revote enabled).
+    const registry = await registryFactory.deploy(admin.address, true);
     await registry.waitForDeployment();
 
     await registry.connect(admin).grantRole(await registry.BALLOT_ROLE(), ballotRole.address);
