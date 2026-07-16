@@ -90,6 +90,21 @@ npm run deploy:merkle-store:sepolia
 npm run uat:335:sepolia
 ```
 
+### Deploy ElectionFactory (VOTAR-337)
+
+Despliega el contrato maestro, verifica el código en Etherscan (si hay `ETHERSCAN_API_KEY`) y escribe el artefacto `deployments/<network>/ElectionFactory.json` (dirección + ABI) para sincronizar con NestJS/PostgreSQL:
+
+```bash
+# Requiere MERKLE_ROOT_STORE_ADDRESS ya desplegado (US-335)
+npm run deploy:factory:sepolia
+```
+
+Luego, desde `back/`:
+
+```bash
+npm run sync:election-factory
+```
+
 ### Despliegue documentado (US-349)
 
 | Red | Contrato | Admin (`DEFAULT_ADMIN_ROLE`) |
