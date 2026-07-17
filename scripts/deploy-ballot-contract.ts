@@ -42,11 +42,14 @@ async function main() {
   }
 
   if (!voteRegistryAddress || !ethers.isAddress(voteRegistryAddress)) {
+    // VOTAR-341 — production default: revote disabled (strict uniqueness).
+    const revoteEnabled = process.env.REVOTE_ENABLED === "true";
     const registryFactory = await ethers.getContractFactory("VoteRegistry");
-    const registry = await registryFactory.deploy(admin);
+    const registry = await registryFactory.deploy(admin, revoteEnabled);
     await registry.waitForDeployment();
     voteRegistryAddress = await registry.getAddress();
     console.log(`[deploy] VoteRegistry deployed at: ${voteRegistryAddress}`);
+    console.log(`[deploy] revoteEnabled: ${revoteEnabled}`);
   }
 
   const factory = await ethers.getContractFactory("BallotContract");

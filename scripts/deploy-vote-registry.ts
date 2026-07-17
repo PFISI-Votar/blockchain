@@ -17,12 +17,16 @@ async function main() {
     throw new Error(`ADMIN_MULTISIG_ADDRESS is not a valid address: ${admin}`);
   }
 
+  // VOTAR-341 — production default: revote disabled (strict uniqueness).
+  const revoteEnabled = process.env.REVOTE_ENABLED === "true";
+
   const factory = await ethers.getContractFactory("VoteRegistry");
-  const contract = await factory.deploy(admin);
+  const contract = await factory.deploy(admin, revoteEnabled);
   await contract.waitForDeployment();
 
   const address = await contract.getAddress();
   console.log(`[deploy] VoteRegistry deployed at: ${address}`);
+  console.log(`[deploy] revoteEnabled: ${revoteEnabled}`);
   console.log(`[deploy] DEFAULT_ADMIN_ROLE granted to: ${admin}`);
   console.log(`[deploy] Set VOTE_REGISTRY_ADDRESS=${address}`);
 }

@@ -31,7 +31,8 @@ contract ElectionFactory is VotarAccessControl {
 
     /**
      * @notice Revote policy injected at election creation (immutable thereafter).
-     * @dev Consumed by off-chain lifecycle / future on-chain revote enforcement.
+     * @dev `enabled` is passed to {VoteRegistry} at deploy (VOTAR-341). Other fields
+     *      are consumed by off-chain lifecycle / future on-chain limits (VOTAR-342/343).
      */
     struct RevoteConfig {
         bool enabled;
@@ -102,7 +103,8 @@ contract ElectionFactory is VotarAccessControl {
 
         // Factory is temporary admin of VoteRegistry so it can grant BALLOT_ROLE
         // atomically, then transfers DEFAULT_ADMIN_ROLE to the Multisig.
-        VoteRegistry registry = new VoteRegistry(address(this));
+        // VOTAR-341 — wire RevoteConfig.enabled into VoteRegistry.revoteEnabled.
+        VoteRegistry registry = new VoteRegistry(address(this), revoteConfig.enabled);
         BallotContract ballotContract =
             new BallotContract(admin, address(merkleRootStore), address(registry));
         AuditViewContract audit =

@@ -20,11 +20,18 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  *      anonymous `voterHash`. `SignedVoteCast` is the receipt event and MUST NOT
  *      include `voterLeaf`, so leaf↔nullifier↔candidateId cannot be joined on-chain.
  *      `candidateId` is bound in the EIP-712 Vote digest (integrity of audit tallies).
+ *      VOTAR-341 — `enforceRevotePolicy`: if {VoteRegistry.revoteEnabled} is false and
+ *      the nullifier already has a vote entry, reverts with {RevoteDisabled}.
  *
  *      The nullifier value is produced off-chain by VOTAR-353 and included in the
  *      signed Vote struct; this contract only verifies the EIP-712 signature and
- *      rejects reuse (UAT-03). It does NOT derive or validate nullifier semantics.
- *      LAST_VOTE_WINS via castSignedVote is deferred to VOTAR-344 (nullifier one-shot here).
+ *      enforces uniqueness / revote policy. It does NOT derive nullifier semantics.
+ *      LAST_VOTE_WINS when revote is enabled is completed in VOTAR-344.
+ *
+ *      Design note (VOTAR-341): `revoteEnabled` is an immutable on {VoteRegistry}
+ *      (one registry deployment per comicio today). Domain config is per-election
+ *      (`PoliticaRevoto`); if a shared registry across elections is ever used,
+ *      the flag must become per-`electionId` (known debt until ElectionFactory).
  */
 contract BallotContract is VotarAccessControl, EIP712 {
     MerkleRootStore public immutable merkleRootStore;
@@ -50,7 +57,8 @@ contract BallotContract is VotarAccessControl, EIP712 {
     error MerkleRootNotPublished(uint256 electionId);
     error MerkleRootStoreIsZeroAddress();
     error VoteRegistryIsZeroAddress();
-    error NullifierAlreadyUsed(bytes32 nullifier);
+    /// @notice Thrown when a nullifier already voted and {VoteRegistry.revoteEnabled} is false.
+    error RevoteDisabled();
     error InvalidSignature();
     /// @notice Thrown when the election is CLOSED/TALLIED or `block.timestamp` >= endTime.
     error ElectionClosed(uint256 electionId);
@@ -109,7 +117,7 @@ contract BallotContract is VotarAccessControl, EIP712 {
     ) external whenNotPaused {
         _assertElectionAcceptingVotes(electionId);
         _assertValidMerkleProof(electionId, voterLeaf, merkleProof);
-        _consumeNullifier(electionId, nullifier);
+        _enforceRevotePolicy(electionId, nullifier);
         _assertValidVoteSignature(
             electionId, nullifier, selectionHash, candidateId, timestamp, expectedSigner, signature
         );
@@ -135,9 +143,18 @@ contract BallotContract is VotarAccessControl, EIP712 {
         return _domainSeparatorV4();
     }
 
-    function _consumeNullifier(uint256 electionId, bytes32 nullifier) private {
+    /**
+     * @dev VOTAR-341 — Strict uniqueness when revote is disabled.
+     *      Checks the nullifier ledger (and aligns with {VoteRegistry} vote entries):
+     *      if the nullifier already has a prior vote and revote is off → {RevoteDisabled}.
+     *      When revote is enabled, reuse is allowed so {VoteRegistry} can overwrite (VOTAR-344).
+     */
+    function _enforceRevotePolicy(uint256 electionId, bytes32 nullifier) private {
         if (_nullifierUsed[electionId][nullifier]) {
-            revert NullifierAlreadyUsed(nullifier);
+            if (!voteRegistry.revoteEnabled()) {
+                revert RevoteDisabled();
+            }
+            return;
         }
         _nullifierUsed[electionId][nullifier] = true;
     }
