@@ -127,6 +127,22 @@ describe("ElectionFactory — VOTAR-337", () => {
           await factory.getAddress(),
         ),
       ).to.equal(false);
+      // VOTAR-341 — RevoteConfig.enabled is frozen into VoteRegistry.revoteEnabled.
+      expect(await registry.revoteEnabled()).to.equal(DEFAULT_REVOTE.enabled);
+    });
+
+    it("deploys VoteRegistry with revoteEnabled=false when RevoteConfig.enabled is false", async () => {
+      const disabledRevote = {
+        ...DEFAULT_REVOTE,
+        enabled: false,
+      };
+      await factory.connect(admin).createElection(ELECTION_ID, disabledRevote);
+      const deployment = await factory.getElection(ELECTION_ID);
+      const registry = await ethers.getContractAt(
+        "VoteRegistry",
+        deployment.voteRegistry,
+      );
+      expect(await registry.revoteEnabled()).to.equal(false);
     });
 
     it("reverts when electionId already exists", async () => {

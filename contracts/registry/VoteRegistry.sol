@@ -11,11 +11,13 @@ import {VotarAccessControl} from "../access/VotarAccessControl.sol";
  *      (typically BallotContract via castSignedVote with nullifier as voterHash).
  *      VOTAR-350 — Pure view helpers for participation stats, per-candidate tallies
  *      and receipt inclusion checks (gas-free RPC reads).
+ *      VOTAR-341 — When `revoteEnabled` is false, a second `recordVote` for the same
+ *      nullifier reverts with {RevoteDisabled} (strict uniqueness). Overwrite /
+ *      LAST_VOTE_WINS tallies apply only when `revoteEnabled` is true (VOTAR-344).
  *
  *      Reserved candidate IDs for non-partisan ballots (blanco/nulo) are exposed as
  *      constants so auditors and UIs can filter those events the same way as
  *      positive votes. Full candidate-set validation remains VOTAR-345.
- *      Overwrite/LAST_WINS tallies work here; end-to-end revote via Ballot is VOTAR-344.
  *
  *      Limitation: one `candidateId` per voterHash — multi-category ballots must
  *      project to a single audit id off-chain until a per-category model exists.
@@ -26,6 +28,12 @@ contract VoteRegistry is VotarAccessControl {
 
     /// @notice Reserved candidate id for null ballots.
     uint256 public constant VOTO_NULO = type(uint256).max;
+
+    /// @notice Whether a nullifier may overwrite a previous vote (LAST_VOTE_WINS).
+    /// @dev Immutable at deploy; production elections default to `false` (VOTAR-341).
+    ///      Assumes one VoteRegistry per comicio. If a registry is shared across
+    ///      elections, replace with a per-electionId mapping (known debt).
+    bool public immutable revoteEnabled;
 
     /**
      * @notice Public audit event for every successful vote recording.
@@ -40,6 +48,9 @@ contract VoteRegistry is VotarAccessControl {
         bool isOverwrite
     );
 
+    /// @notice Thrown when a nullifier already has a vote and revote is disabled.
+    error RevoteDisabled();
+
     struct VoterState {
         uint256 candidateId;
         bool hasVoted;
@@ -52,7 +63,14 @@ contract VoteRegistry is VotarAccessControl {
     /// @notice Anonymous receipt anchors included on-chain (`voterHash` / nullifier).
     mapping(bytes32 receiptHash => bool included) private _receiptIncluded;
 
-    constructor(address admin) VotarAccessControl(admin) {}
+    /**
+     * @param admin DEFAULT_ADMIN_ROLE holder (Multisig / Governor).
+     * @param revoteEnabled_ When false, second vote for the same nullifier reverts
+     *        with {RevoteDisabled}. When true, LAST_VOTE_WINS overwrites are allowed.
+     */
+    constructor(address admin, bool revoteEnabled_) VotarAccessControl(admin) {
+        revoteEnabled = revoteEnabled_;
+    }
 
     /**
      * @notice Records (or overwrites) a vote and emits {VoteCast} atomically.
@@ -69,6 +87,9 @@ contract VoteRegistry is VotarAccessControl {
         bool isOverwrite = state.hasVoted;
 
         if (isOverwrite) {
+            if (!revoteEnabled) {
+                revert RevoteDisabled();
+            }
             if (state.candidateId != candidateId) {
                 unchecked {
                     _tallies[electionId][state.candidateId] -= 1;

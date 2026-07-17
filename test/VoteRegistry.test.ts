@@ -22,7 +22,8 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
     const [admin, ballotRole, stranger] = await ethers.getSigners();
 
     const registryFactory = await ethers.getContractFactory("VoteRegistry");
-    const registry = await registryFactory.deploy(admin.address);
+    // Overwrite UATs require revote enabled (LAST_VOTE_WINS path / VOTAR-344).
+    const registry = await registryFactory.deploy(admin.address, true);
     await registry.waitForDeployment();
 
     await registry.connect(admin).grantRole(await registry.BALLOT_ROLE(), ballotRole.address);
@@ -88,6 +89,7 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
 
   describe("overwrite flag and atomic tally updates", () => {
     it("emits isOverwrite=true and adjusts tallies when candidate changes", async () => {
+      expect(await registry.revoteEnabled()).to.equal(true);
       await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A);
 
       await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_B))
@@ -106,6 +108,29 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
         .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, true);
 
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(1n);
+    });
+  });
+
+  describe("VOTAR-341: RevoteDisabled when revote is off", () => {
+    it("reverts RevoteDisabled on second recordVote for the same nullifier", async () => {
+      const [adminSigner, ballotSigner] = await ethers.getSigners();
+      const factory = await ethers.getContractFactory("VoteRegistry");
+      const disabledRegistry = await factory.deploy(adminSigner.address, false);
+      await disabledRegistry.waitForDeployment();
+      await disabledRegistry
+        .connect(adminSigner)
+        .grantRole(await disabledRegistry.BALLOT_ROLE(), ballotSigner.address);
+
+      await disabledRegistry
+        .connect(ballotSigner)
+        .recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A);
+
+      await expect(
+        disabledRegistry.connect(ballotSigner).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_B),
+      ).to.be.revertedWithCustomError(disabledRegistry, "RevoteDisabled");
+
+      expect(await disabledRegistry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(1n);
+      expect(await disabledRegistry.getTally(ELECTION_ID, CANDIDATE_B)).to.equal(0n);
     });
   });
 

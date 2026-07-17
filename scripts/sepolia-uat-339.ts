@@ -44,11 +44,12 @@ async function getVoteRegistryAddress(): Promise<string> {
 
   const admin = process.env.ADMIN_MULTISIG_ADDRESS!;
   console.log("[uat-339] Deploying VoteRegistry...");
+  const revoteEnabled = process.env.REVOTE_ENABLED === "true";
   const factory = await ethers.getContractFactory("VoteRegistry");
-  const contract = await factory.deploy(admin);
+  const contract = await factory.deploy(admin, revoteEnabled);
   await contract.waitForDeployment();
   const address = await contract.getAddress();
-  console.log(`[uat-339] VoteRegistry deployed at: ${address}`);
+  console.log(`[uat-339] VoteRegistry deployed at: ${address} (revoteEnabled=${revoteEnabled})`);
   return address;
 }
 
