@@ -98,6 +98,16 @@ async function main() {
   await auditView.waitForDeployment();
   const auditViewAddress = await auditView.getAddress();
 
+  // VOTAR-337 — ElectionFactory (master) wired to the shared MerkleRootStore.
+  const electionFactoryFactory =
+    await ethers.getContractFactory("ElectionFactory");
+  const electionFactory = await electionFactoryFactory.deploy(
+    admin.address,
+    contractAddress,
+  );
+  await electionFactory.waitForDeployment();
+  const electionFactoryAddress = await electionFactory.getAddress();
+
   const ballotRole = await registry.BALLOT_ROLE();
   const hasBallotRole = await registry.hasRole(ballotRole, ballotAddress);
   if (!hasBallotRole) {
@@ -135,6 +145,7 @@ async function main() {
       VOTE_REGISTRY_ADDRESS: registryAddress,
       AUDIT_VIEW_ADDRESS: auditViewAddress,
       BALLOT_CONTRACT_ADDRESS: ballotAddress,
+      ELECTION_FACTORY_ADDRESS: electionFactoryAddress,
       MERKLE_UPDATER_PRIVATE_KEY: HARDHAT_ACCOUNT_1_PRIVATE_KEY,
       CHAIN_ID: chainId,
       ETHERSCAN_BASE_URL: "http://localhost",
@@ -169,6 +180,7 @@ async function main() {
   console.log(`[deploy-local] VoteRegistry:    ${registryAddress}`);
   console.log(`[deploy-local] BallotContract:  ${ballotAddress}`);
   console.log(`[deploy-local] AuditView:       ${auditViewAddress}`);
+  console.log(`[deploy-local] ElectionFactory: ${electionFactoryAddress}`);
   console.log(`[deploy-local] DEFAULT_ADMIN_ROLE: ${admin.address}`);
   console.log(`[deploy-local] MERKLE_UPDATER_ROLE: ${merkleUpdater.address}`);
   console.log(`[deploy-local] chainId: ${chainId}`);
