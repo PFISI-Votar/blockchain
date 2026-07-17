@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
-import { ethers, network, run } from "hardhat";
+import { ethers, network } from "hardhat";
+import { verifyContractSource } from "./lib/verify-contract";
 import { writeElectionFactoryArtifact } from "./lib/write-deployment-artifact";
+import { exportAbisToConsumers } from "./lib/export-abis";
 
 /**
  * VOTAR-337 — Deploys ElectionFactory, optionally verifies on Etherscan, and
@@ -11,6 +13,9 @@ import { writeElectionFactoryArtifact } from "./lib/write-deployment-artifact";
  * Optional:
  *   ETHERSCAN_API_KEY — enables automatic source verification
  *   SKIP_VERIFY=true — skip verification even if API key is set
+ *
+ * For full-stack Sepolia automation (gas retries + catalog + ABI export), prefer:
+ *   npm run deploy:sepolia:stack
  */
 async function main() {
   let admin = process.env.ADMIN_MULTISIG_ADDRESS;
@@ -66,40 +71,11 @@ async function main() {
     console.log(`[deploy] tx:                          ${receipt.hash}`);
   }
 
-  let verified = false;
-  const skipVerify = process.env.SKIP_VERIFY === "true";
-  const etherscanApiKey = process.env.ETHERSCAN_API_KEY?.trim();
-
-  if (!skipVerify && etherscanApiKey && network.name === "sepolia") {
-    console.log("[deploy] Waiting for Etherscan indexing before verify...");
-    await new Promise((resolve) => setTimeout(resolve, 15_000));
-    try {
-      await run("verify:verify", {
-        address,
-        constructorArguments: [admin, merkleRootStoreAddress],
-      });
-      verified = true;
-      console.log("[deploy] Source verified on Etherscan");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.toLowerCase().includes("already verified")) {
-        verified = true;
-        console.log("[deploy] Source already verified on Etherscan");
-      } else {
-        console.error(`[deploy] Etherscan verification failed: ${message}`);
-        console.error(
-          "[deploy] Re-run with: npx hardhat verify --network sepolia",
-          address,
-          admin,
-          merkleRootStoreAddress,
-        );
-      }
-    }
-  } else if (network.name === "sepolia" && !etherscanApiKey) {
-    console.warn(
-      "[deploy] ETHERSCAN_API_KEY not set — skipping automatic verification",
-    );
-  }
+  const verified = await verifyContractSource({
+    address,
+    constructorArguments: [admin, merkleRootStoreAddress],
+    networkName: network.name,
+  });
 
   const artifact = await ethers.getContractFactory("ElectionFactory");
   const fullAbi = JSON.parse(artifact.interface.formatJson()) as unknown[];
@@ -124,6 +100,9 @@ async function main() {
   });
 
   console.log(`[deploy] Artifact written to ${artifactPath}`);
+
+  await exportAbisToConsumers(["ElectionFactory"]);
+
   console.log(
     `[deploy] Sync into NestJS DB with: npm run sync:election-factory (from back/)`,
   );

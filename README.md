@@ -105,6 +105,18 @@ Luego, desde `back/`:
 npm run sync:election-factory
 ```
 
+### Deploy stack Sepolia automatizado (VOTAR-385)
+
+Pipeline completo: gas EIP-1559 dinámico + reintentos RPC, verificación Etherscan, catálogo de artefactos y exportación de ABIs a backend/frontend:
+
+```bash
+npm run deploy:sepolia:stack
+# Solo ABIs (sin deploy on-chain):
+npm run export:abis
+```
+
+Documentación UAT: [`docs/US-385-sepolia-deploy-verify.md`](docs/US-385-sepolia-deploy-verify.md).
+
 ### Despliegue documentado (US-349)
 
 | Red | Contrato | Admin (`DEFAULT_ADMIN_ROLE`) |
