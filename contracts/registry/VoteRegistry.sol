@@ -31,6 +31,8 @@ contract VoteRegistry is VotarAccessControl {
 
     /// @notice Whether a nullifier may overwrite a previous vote (LAST_VOTE_WINS).
     /// @dev Immutable at deploy; production elections default to `false` (VOTAR-341).
+    ///      Assumes one VoteRegistry per comicio. If a registry is shared across
+    ///      elections, replace with a per-electionId mapping (known debt).
     bool public immutable revoteEnabled;
 
     /**
