@@ -8,6 +8,10 @@ const SEPOLIA_RPC_URL = process.env.SEPOLIA_RPC_URL ?? "";
 const PRIVATE_KEY = process.env.PRIVATE_KEY ?? "";
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY ?? "";
 
+/**
+ * Compiler settings are pinned so bytecode is identical across machines
+ * under the same Solidity version (VOTAR-385 — reproducible deploy).
+ */
 const config: HardhatUserConfig = {
   solidity: {
     version: "0.8.26",
@@ -33,11 +37,15 @@ const config: HardhatUserConfig = {
           sepolia: {
             url: SEPOLIA_RPC_URL,
             accounts: [PRIVATE_KEY],
+            // Tolerate Infura/Alchemy micro-outages during deploy (VOTAR-385).
+            timeout: 180_000,
+            // Multiplies gas *limit* estimates; fee bumps are handled in scripts/lib/gas.ts.
+            gasMultiplier: 1.15,
           },
         }
       : {}),
   },
-  // VOTAR-337 — automatic source verification after ElectionFactory deploy.
+  // Automatic source verification after Sepolia deploy (VOTAR-337 / VOTAR-385).
   etherscan: {
     apiKey: ETHERSCAN_API_KEY || undefined,
   },

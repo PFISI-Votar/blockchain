@@ -17,6 +17,8 @@
     "deploy:audit-view:sepolia": "hardhat run scripts/deploy-audit-view.ts --network sepolia",
     "deploy:factory": "hardhat run scripts/deploy-election-factory.ts",
     "deploy:factory:sepolia": "hardhat run scripts/deploy-election-factory.ts --network sepolia",
+    "deploy:sepolia:stack": "hardhat run scripts/deploy-sepolia-stack.ts --network sepolia",
+    "export:abis": "hardhat run scripts/export-abis.ts",
     "uat:335:sepolia": "hardhat run scripts/sepolia-uat-335.ts --network sepolia",
     "uat:339:sepolia": "hardhat run scripts/sepolia-uat-339.ts --network sepolia",
     "uat:350": "hardhat run scripts/uat-audit-views.ts",

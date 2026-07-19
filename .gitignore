@@ -23,6 +23,9 @@ ignition/deployments/
 deployments/*/
 !deployments/.gitkeep
 
+# Transient ABI export dirs used by unit tests
+tmp-abis-*/
+
 # OpenZeppelin upgrades plugin state
 .openzeppelin/
 
