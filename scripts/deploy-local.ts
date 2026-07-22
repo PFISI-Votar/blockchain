@@ -3,6 +3,13 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 /**
+ * Hardhat default account #0 private key — DEFAULT_ADMIN + ELECTION_ADMIN locally.
+ * @see https://hardhat.org/hardhat-network/docs/#accounts
+ */
+const HARDHAT_ACCOUNT_0_PRIVATE_KEY =
+  "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+/**
  * Hardhat default account #1 private key (matches `hardhat node` output).
  * @see https://hardhat.org/hardhat-network/docs/#accounts
  */
@@ -120,6 +127,21 @@ async function main() {
     await grantBallotTx.wait();
   }
 
+  const electionAdminRole = await contract.ELECTION_ADMIN_ROLE();
+  const hasElectionAdminRole = await contract.hasRole(
+    electionAdminRole,
+    admin.address,
+  );
+  if (!hasElectionAdminRole) {
+    console.log(
+      `[deploy-local] Otorgando ELECTION_ADMIN_ROLE a ${admin.address}...`,
+    );
+    const grantElectionAdminTx = await contract
+      .connect(admin)
+      .grantRole(electionAdminRole, admin.address);
+    await grantElectionAdminTx.wait();
+  }
+
   const merkleUpdaterRole = await contract.MERKLE_UPDATER_ROLE();
   const hasRole = await contract.hasRole(
     merkleUpdaterRole,
@@ -147,6 +169,7 @@ async function main() {
       BALLOT_CONTRACT_ADDRESS: ballotAddress,
       ELECTION_FACTORY_ADDRESS: electionFactoryAddress,
       MERKLE_UPDATER_PRIVATE_KEY: HARDHAT_ACCOUNT_1_PRIVATE_KEY,
+      ELECTION_ADMIN_PRIVATE_KEY: HARDHAT_ACCOUNT_0_PRIVATE_KEY,
       CHAIN_ID: chainId,
       ETHERSCAN_BASE_URL: "http://localhost",
     },
