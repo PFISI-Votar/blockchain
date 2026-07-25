@@ -135,6 +135,21 @@ async function main() {
     await grantTx.wait();
   }
 
+  const electionAdminRole = await contract.ELECTION_ADMIN_ROLE();
+  const adminHasElectionRole = await contract.hasRole(
+    electionAdminRole,
+    admin.address,
+  );
+  if (!adminHasElectionRole) {
+    console.log(
+      `[deploy-local] Otorgando ELECTION_ADMIN_ROLE a ${admin.address}...`,
+    );
+    const grantElectionAdminTx = await contract
+      .connect(admin)
+      .grantRole(electionAdminRole, admin.address);
+    await grantElectionAdminTx.wait();
+  }
+
   const chainId = Number((await ethers.provider.getNetwork()).chainId);
 
   writeEnvFile(
@@ -147,6 +162,8 @@ async function main() {
       BALLOT_CONTRACT_ADDRESS: ballotAddress,
       ELECTION_FACTORY_ADDRESS: electionFactoryAddress,
       MERKLE_UPDATER_PRIVATE_KEY: HARDHAT_ACCOUNT_1_PRIVATE_KEY,
+      ELECTION_ADMIN_PRIVATE_KEY:
+        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
       CHAIN_ID: chainId,
       ETHERSCAN_BASE_URL: "http://localhost",
     },
