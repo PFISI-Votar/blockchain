@@ -52,11 +52,14 @@ async function main() {
     console.log(`[deploy] revoteEnabled: ${revoteEnabled}`);
   }
 
+  // VOTAR-324 — production floor: 1 vote per voter unless overridden.
+  const maxVotesPerVoter = Number(process.env.MAX_VOTES_PER_VOTER ?? "1");
   const factory = await ethers.getContractFactory("BallotContract");
   const contract = await factory.deploy(
     admin,
     merkleRootStoreAddress,
     voteRegistryAddress,
+    maxVotesPerVoter,
   );
   await contract.waitForDeployment();
 

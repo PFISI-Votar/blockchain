@@ -32,10 +32,18 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  *      (one registry deployment per comicio today). Domain config is per-election
  *      (`PoliticaRevoto`); if a shared registry across elections is ever used,
  *      the flag must become per-`electionId` (known debt until ElectionFactory).
+ *
+ *      VOTAR-324 — `maxVotesPerVoter` caps how many times a nullifier may cast a
+ *      signed vote (1..10 enforced off-chain by the backend DTO; the contract only
+ *      requires >= 1). Only {castSignedVote} enforces the counter: {castVote} is the
+ *      legacy US-339 Merkle-only path with no nullifier, no VoteRegistry write, and
+ *      no production caller (the frontend always signs via {castSignedVote}).
  */
 contract BallotContract is VotarAccessControl, EIP712 {
     MerkleRootStore public immutable merkleRootStore;
     VoteRegistry public immutable voteRegistry;
+    /// @notice VOTAR-324 — maximum signed votes a single nullifier may cast.
+    uint16 public immutable maxVotesPerVoter;
 
     bytes32 private constant VOTE_TYPEHASH = keccak256(
         "Vote(uint256 electionId,bytes32 nullifier,bytes32 selectionHash,uint256 candidateId,uint256 timestamp)"
@@ -62,18 +70,26 @@ contract BallotContract is VotarAccessControl, EIP712 {
     error InvalidSignature();
     /// @notice Thrown when the election is CLOSED/TALLIED or `block.timestamp` >= endTime.
     error ElectionClosed(uint256 electionId);
+    /// @notice Thrown when `maxVotesPerVoter` is constructed as zero.
+    error InvalidMaxVotesPerVoter();
+    /// @notice Thrown when a nullifier already reached `maxVotesPerVoter` signed votes.
+    error MaxVotesReached(uint256 electionId, uint16 maxVotes);
 
     mapping(uint256 electionId => mapping(bytes32 voterLeaf => bool hasVoted)) private _hasVoted;
-    mapping(uint256 electionId => mapping(bytes32 nullifier => bool used)) private _nullifierUsed;
+    mapping(uint256 electionId => mapping(bytes32 nullifier => uint16 votesUsed)) private _votesUsed;
 
-    constructor(address admin, address merkleRootStoreAddress, address voteRegistryAddress)
-        VotarAccessControl(admin)
-        EIP712("VOTAR", "1")
-    {
+    constructor(
+        address admin,
+        address merkleRootStoreAddress,
+        address voteRegistryAddress,
+        uint16 maxVotesPerVoter_
+    ) VotarAccessControl(admin) EIP712("VOTAR", "1") {
         if (merkleRootStoreAddress == address(0)) revert MerkleRootStoreIsZeroAddress();
         if (voteRegistryAddress == address(0)) revert VoteRegistryIsZeroAddress();
+        if (maxVotesPerVoter_ == 0) revert InvalidMaxVotesPerVoter();
         merkleRootStore = MerkleRootStore(merkleRootStoreAddress);
         voteRegistry = VoteRegistry(voteRegistryAddress);
+        maxVotesPerVoter = maxVotesPerVoter_;
     }
 
     /**
@@ -135,7 +151,7 @@ contract BallotContract is VotarAccessControl, EIP712 {
 
     /// @notice Returns whether a nullifier was already consumed for the election.
     function isNullifierUsed(uint256 electionId, bytes32 nullifier) external view returns (bool) {
-        return _nullifierUsed[electionId][nullifier];
+        return _votesUsed[electionId][nullifier] != 0;
     }
 
     /// @notice Exposes the EIP-712 domain separator for off-chain signing clients.
@@ -147,16 +163,18 @@ contract BallotContract is VotarAccessControl, EIP712 {
      * @dev VOTAR-341 — Strict uniqueness when revote is disabled.
      *      Checks the nullifier ledger (and aligns with {VoteRegistry} vote entries):
      *      if the nullifier already has a prior vote and revote is off → {RevoteDisabled}.
-     *      When revote is enabled, reuse is allowed so {VoteRegistry} can overwrite (VOTAR-344).
+     *      When revote is enabled, reuse is allowed so {VoteRegistry} can overwrite (VOTAR-344),
+     *      up to `maxVotesPerVoter` signed votes (VOTAR-324) → {MaxVotesReached} beyond that.
      */
     function _enforceRevotePolicy(uint256 electionId, bytes32 nullifier) private {
-        if (_nullifierUsed[electionId][nullifier]) {
-            if (!voteRegistry.revoteEnabled()) {
-                revert RevoteDisabled();
-            }
-            return;
+        uint16 used = _votesUsed[electionId][nullifier];
+        if (used > 0 && !voteRegistry.revoteEnabled()) {
+            revert RevoteDisabled();
         }
-        _nullifierUsed[electionId][nullifier] = true;
+        if (used >= maxVotesPerVoter) {
+            revert MaxVotesReached(electionId, maxVotesPerVoter);
+        }
+        _votesUsed[electionId][nullifier] = used + 1;
     }
 
     function _assertValidVoteSignature(

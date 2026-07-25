@@ -84,11 +84,14 @@ async function main() {
   const registryAddress = await registry.getAddress();
   console.log(`[deploy-local] VoteRegistry revoteEnabled=${revoteEnabled}`);
 
+  // VOTAR-324 — local default matches production floor: 1 vote per voter.
+  const maxVotesPerVoter = Number(process.env.MAX_VOTES_PER_VOTER ?? "1");
   const ballotFactory = await ethers.getContractFactory("BallotContract");
   const ballot = await ballotFactory.deploy(
     admin.address,
     contractAddress,
     registryAddress,
+    maxVotesPerVoter,
   );
   await ballot.waitForDeployment();
   const ballotAddress = await ballot.getAddress();
