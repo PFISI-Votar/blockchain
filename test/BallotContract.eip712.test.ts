@@ -60,7 +60,9 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
   let VOTO_BLANCO: bigint;
   let VOTO_NULO: bigint;
 
-  async function deployFixture() {
+  async function deployFixture(
+    options: { revoteEnabled?: boolean; maxVotesPerVoter?: number } = {},
+  ) {
     const [admin, merkleUpdater, ephemeralSigner, voter] = await ethers.getSigners();
 
     const storeFactory = await ethers.getContractFactory("MerkleRootStore");
@@ -69,14 +71,19 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
 
     const registryFactory = await ethers.getContractFactory("VoteRegistry");
     // VOTAR-341 — default production policy: revote disabled.
-    const registry = await registryFactory.deploy(admin.address, false);
+    const registry = await registryFactory.deploy(
+      admin.address,
+      options.revoteEnabled ?? false,
+    );
     await registry.waitForDeployment();
 
     const ballotFactory = await ethers.getContractFactory("BallotContract");
+    // VOTAR-324 — generous default so pre-existing tests never hit MaxVotesReached.
     const ballot = await ballotFactory.deploy(
       admin.address,
       await store.getAddress(),
       await registry.getAddress(),
+      options.maxVotesPerVoter ?? 10,
     );
     await ballot.waitForDeployment();
 
@@ -342,6 +349,106 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       expect(totalAfter).to.equal(1n);
       const [, hasVoted] = await registry.getVoterState(ELECTION_ID, nullifier);
       expect(hasVoted).to.equal(true);
+    });
+  });
+
+  describe("VOTAR-324: límite de sufragios por votante on-chain", () => {
+    it("UAT-03 — rechaza el tercer voto firmado cuando maxVotesPerVoter=2 con re-voto habilitado", async () => {
+      const fixture = await deployFixture({ revoteEnabled: true, maxVotesPerVoter: 2 });
+      const {
+        ballot: limitedBallot,
+        voter: limitedVoter,
+        ephemeralSigner: limitedSigner,
+        validProof: limitedProof,
+        nullifier: limitedNullifier,
+        selectionHash: limitedSelectionHash,
+      } = fixture;
+
+      // signVote is bound to the outer-scope fixture; sign directly against this
+      // fixture's ballot address (its EIP-712 domain differs).
+      const domain = {
+        name: "VOTAR",
+        version: "1",
+        chainId: (await ethers.provider.getNetwork()).chainId,
+        verifyingContract: await limitedBallot.getAddress(),
+      };
+      const message = {
+        electionId: ELECTION_ID,
+        nullifier: limitedNullifier,
+        selectionHash: limitedSelectionHash,
+        candidateId: CANDIDATE_ID,
+        timestamp: TIMESTAMP,
+      };
+      const signature = await limitedSigner.signTypedData(domain, VOTE_TYPE, message);
+
+      const cast = () =>
+        limitedBallot
+          .connect(limitedVoter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            limitedProof,
+            limitedNullifier,
+            limitedSelectionHash,
+            TIMESTAMP,
+            limitedSigner.address,
+            signature,
+            CANDIDATE_ID,
+          );
+
+      await expect(cast()).to.emit(limitedBallot, "SignedVoteCast");
+      await expect(cast()).to.emit(limitedBallot, "SignedVoteCast");
+      await expect(cast())
+        .to.be.revertedWithCustomError(limitedBallot, "MaxVotesReached")
+        .withArgs(ELECTION_ID, 2);
+    });
+
+    it("reverts InvalidMaxVotesPerVoter when constructed with zero", async () => {
+      const { store, registry, admin } = await deployFixture();
+      const ballotFactory = await ethers.getContractFactory("BallotContract");
+      await expect(
+        ballotFactory.deploy(
+          admin.address,
+          await store.getAddress(),
+          await registry.getAddress(),
+          0,
+        ),
+      ).to.be.revertedWithCustomError(ballotFactory, "InvalidMaxVotesPerVoter");
+    });
+
+    it("still reverts RevoteDisabled (not MaxVotesReached) when maxVotesPerVoter=1 and revote is off", async () => {
+      const fixture = await deployFixture({ revoteEnabled: false, maxVotesPerVoter: 1 });
+      const domain = {
+        name: "VOTAR",
+        version: "1",
+        chainId: (await ethers.provider.getNetwork()).chainId,
+        verifyingContract: await fixture.ballot.getAddress(),
+      };
+      const message = {
+        electionId: ELECTION_ID,
+        nullifier: fixture.nullifier,
+        selectionHash: fixture.selectionHash,
+        candidateId: CANDIDATE_ID,
+        timestamp: TIMESTAMP,
+      };
+      const signature = await fixture.ephemeralSigner.signTypedData(domain, VOTE_TYPE, message);
+      const cast = () =>
+        fixture.ballot
+          .connect(fixture.voter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            fixture.validProof,
+            fixture.nullifier,
+            fixture.selectionHash,
+            TIMESTAMP,
+            fixture.ephemeralSigner.address,
+            signature,
+            CANDIDATE_ID,
+          );
+
+      await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
+      await expect(cast()).to.be.revertedWithCustomError(fixture.ballot, "RevoteDisabled");
     });
   });
 

@@ -114,6 +114,8 @@ describe("ElectionFactory — VOTAR-337", () => {
         await merkleStore.getAddress(),
       );
       expect(await ballot.voteRegistry()).to.equal(deployment.voteRegistry);
+      // VOTAR-324 — maxVotesPerVoter is wired from RevoteConfig into BallotContract.
+      expect(await ballot.maxVotesPerVoter()).to.equal(DEFAULT_REVOTE.maxVotesPerVoter);
       expect(await ballot.hasRole(await ballot.DEFAULT_ADMIN_ROLE(), admin.address))
         .to.equal(true);
 
