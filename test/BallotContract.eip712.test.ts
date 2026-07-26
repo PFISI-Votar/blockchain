@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
+import { loadFixture, time } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { BallotContract, MerkleRootStore, VoteRegistry } from "../typechain-types";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import {
@@ -61,7 +61,11 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
   let VOTO_NULO: bigint;
 
   async function deployFixture(
-    options: { revoteEnabled?: boolean; maxVotesPerVoter?: number } = {},
+    options: {
+      revoteEnabled?: boolean;
+      maxVotesPerVoter?: number;
+      minIntervalSeconds?: number;
+    } = {},
   ) {
     const [admin, merkleUpdater, ephemeralSigner, voter] = await ethers.getSigners();
 
@@ -79,11 +83,14 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
 
     const ballotFactory = await ethers.getContractFactory("BallotContract");
     // VOTAR-324 — generous default so pre-existing tests never hit MaxVotesReached.
+    // VOTAR-325 — default 0 (no cooldown) so pre-existing back-to-back casts never
+    // hit CooldownActive.
     const ballot = await ballotFactory.deploy(
       admin.address,
       await store.getAddress(),
       await registry.getAddress(),
       options.maxVotesPerVoter ?? 10,
+      options.minIntervalSeconds ?? 0,
     );
     await ballot.waitForDeployment();
 
@@ -412,6 +419,7 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
           await store.getAddress(),
           await registry.getAddress(),
           0,
+          0,
         ),
       ).to.be.revertedWithCustomError(ballotFactory, "InvalidMaxVotesPerVoter");
     });
@@ -449,6 +457,126 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
 
       await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
       await expect(cast()).to.be.revertedWithCustomError(fixture.ballot, "RevoteDisabled");
+    });
+  });
+
+  describe("VOTAR-325: intervalo mínimo entre re-votos (cooldown anti coerción)", () => {
+    async function signForFixture(
+      fixture: Awaited<ReturnType<typeof deployFixture>>,
+      signer: HardhatEthersSigner,
+    ) {
+      const domain = {
+        name: "VOTAR",
+        version: "1",
+        chainId: (await ethers.provider.getNetwork()).chainId,
+        verifyingContract: await fixture.ballot.getAddress(),
+      };
+      const message = {
+        electionId: ELECTION_ID,
+        nullifier: fixture.nullifier,
+        selectionHash: fixture.selectionHash,
+        candidateId: CANDIDATE_ID,
+        timestamp: TIMESTAMP,
+      };
+      const signature = await signer.signTypedData(domain, VOTE_TYPE, message);
+      const cast = () =>
+        fixture.ballot
+          .connect(fixture.voter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            fixture.validProof,
+            fixture.nullifier,
+            fixture.selectionHash,
+            TIMESTAMP,
+            signer.address,
+            signature,
+            CANDIDATE_ID,
+          );
+      return cast;
+    }
+
+    it("UAT-01 — rechaza el segundo voto con CooldownActive antes de cumplirse el intervalo", async () => {
+      const fixture = await deployFixture({
+        revoteEnabled: true,
+        maxVotesPerVoter: 5,
+        minIntervalSeconds: 300,
+      });
+      const cast = await signForFixture(fixture, fixture.ephemeralSigner);
+
+      await cast();
+      const voteTimestamp = await time.latest();
+      const nextTimestamp = voteTimestamp + 1;
+      await ethers.provider.send("evm_setNextBlockTimestamp", [nextTimestamp]);
+      const expectedRemaining = 300 - (nextTimestamp - voteTimestamp);
+
+      await expect(cast())
+        .to.be.revertedWithCustomError(fixture.ballot, "CooldownActive")
+        .withArgs(ELECTION_ID, expectedRemaining);
+    });
+
+    it("UAT-02 — acepta el segundo voto una vez transcurrido minIntervalSeconds, ignorando el reloj local del cliente", async () => {
+      const fixture = await deployFixture({
+        revoteEnabled: true,
+        maxVotesPerVoter: 5,
+        minIntervalSeconds: 300,
+      });
+      const cast = await signForFixture(fixture, fixture.ephemeralSigner);
+
+      await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
+      await time.increase(300);
+      await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
+    });
+
+    it("precedencia: revierte RevoteDisabled (no CooldownActive) cuando el re-voto está apagado", async () => {
+      const fixture = await deployFixture({
+        revoteEnabled: false,
+        maxVotesPerVoter: 5,
+        minIntervalSeconds: 300,
+      });
+      const cast = await signForFixture(fixture, fixture.ephemeralSigner);
+
+      await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
+      await expect(cast()).to.be.revertedWithCustomError(fixture.ballot, "RevoteDisabled");
+    });
+
+    it("getVoterState refleja votesUsed, lastVoteAt, cooldownRemaining decreciente y blockTimestamp del nodo", async () => {
+      const fixture = await deployFixture({
+        revoteEnabled: true,
+        maxVotesPerVoter: 5,
+        minIntervalSeconds: 300,
+      });
+      const cast = await signForFixture(fixture, fixture.ephemeralSigner);
+
+      const beforeVote = await fixture.ballot.getVoterState(ELECTION_ID, fixture.nullifier);
+      expect(beforeVote.votesUsed).to.equal(0n);
+      expect(beforeVote.lastVoteAt).to.equal(0n);
+      expect(beforeVote.cooldownRemaining).to.equal(0n);
+
+      await cast();
+      const voteTimestamp = await time.latest();
+
+      const afterVote = await fixture.ballot.getVoterState(ELECTION_ID, fixture.nullifier);
+      expect(afterVote.votesUsed).to.equal(1n);
+      expect(afterVote.lastVoteAt).to.equal(BigInt(voteTimestamp));
+      expect(afterVote.cooldownRemaining).to.equal(300n);
+      expect(afterVote.blockTimestamp).to.equal(BigInt(voteTimestamp));
+
+      await time.increase(120);
+      const midCooldown = await fixture.ballot.getVoterState(ELECTION_ID, fixture.nullifier);
+      expect(midCooldown.cooldownRemaining).to.equal(180n);
+
+      await time.increase(180);
+      const unlocked = await fixture.ballot.getVoterState(ELECTION_ID, fixture.nullifier);
+      expect(unlocked.cooldownRemaining).to.equal(0n);
+    });
+
+    it("minIntervalSeconds=0 (default) no bloquea votos consecutivos", async () => {
+      const fixture = await deployFixture({ revoteEnabled: true, maxVotesPerVoter: 5 });
+      const cast = await signForFixture(fixture, fixture.ephemeralSigner);
+
+      await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
+      await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
     });
   });
 

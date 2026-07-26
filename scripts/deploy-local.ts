@@ -86,12 +86,15 @@ async function main() {
 
   // VOTAR-324 — local default matches production floor: 1 vote per voter.
   const maxVotesPerVoter = Number(process.env.MAX_VOTES_PER_VOTER ?? "1");
+  // VOTAR-325 — local default matches production floor: no cooldown.
+  const minIntervalSeconds = Number(process.env.MIN_INTERVAL_SECONDS ?? "0");
   const ballotFactory = await ethers.getContractFactory("BallotContract");
   const ballot = await ballotFactory.deploy(
     admin.address,
     contractAddress,
     registryAddress,
     maxVotesPerVoter,
+    minIntervalSeconds,
   );
   await ballot.waitForDeployment();
   const ballotAddress = await ballot.getAddress();

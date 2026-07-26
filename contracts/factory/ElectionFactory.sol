@@ -33,7 +33,7 @@ contract ElectionFactory is VotarAccessControl {
      * @notice Revote policy injected at election creation (immutable thereafter).
      * @dev `enabled` is passed to {VoteRegistry} at deploy (VOTAR-341).
      *      `maxVotesPerVoter` is passed to {BallotContract} at deploy (VOTAR-324).
-     *      `minIntervalSeconds` remains off-chain lifecycle only (VOTAR-343).
+     *      `minIntervalSeconds` is passed to {BallotContract} at deploy (VOTAR-325).
      */
     struct RevoteConfig {
         bool enabled;
@@ -107,7 +107,11 @@ contract ElectionFactory is VotarAccessControl {
         // VOTAR-341 — wire RevoteConfig.enabled into VoteRegistry.revoteEnabled.
         VoteRegistry registry = new VoteRegistry(address(this), revoteConfig.enabled);
         BallotContract ballotContract = new BallotContract(
-            admin, address(merkleRootStore), address(registry), revoteConfig.maxVotesPerVoter
+            admin,
+            address(merkleRootStore),
+            address(registry),
+            revoteConfig.maxVotesPerVoter,
+            revoteConfig.minIntervalSeconds
         );
         AuditViewContract audit =
             new AuditViewContract(address(merkleRootStore), address(registry));
