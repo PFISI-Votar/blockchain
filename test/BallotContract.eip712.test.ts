@@ -91,6 +91,7 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       await registry.getAddress(),
       options.maxVotesPerVoter ?? 10,
       options.minIntervalSeconds ?? 0,
+      0, // TallyPolicy.LAST_VOTE_WINS
     );
     await ballot.waitForDeployment();
 
@@ -194,6 +195,64 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
     it("exposes an EIP-712 domain separator tied to this deployment", async () => {
       const separator = await ballot.domainSeparator();
       expect(separator).to.not.equal(ethers.ZeroHash);
+    });
+  });
+
+  describe("VOTAR-326: tallyPolicy inyectada e inmutable", () => {
+    it("expone tallyPolicy=LAST_VOTE_WINS (0) tras el despliegue", async () => {
+      expect(await ballot.tallyPolicy()).to.equal(0n);
+    });
+
+    // Nota: TallyPolicy tiene un único miembro (LAST_VOTE_WINS=0). Tanto Solidity
+    // (Panic 0x21 al decodificar el enum) como ethers (valida el rango del enum
+    // antes de encodear la transacción) rechazan cualquier otro valor antes de que
+    // el guard {InvalidTallyPolicy} del constructor pueda ejecutarse — no hay vía
+    // externa real para alcanzarlo hoy. Se mantiene como defensa en profundidad
+    // para cuando el enum crezca con nuevas políticas.
+
+    it("lastVoteIndex refleja el índice 0-based del último sufragio firmado", async () => {
+      const fixture = await deployFixture({ revoteEnabled: true, maxVotesPerVoter: 3 });
+
+      await expect(
+        fixture.ballot.lastVoteIndex(ELECTION_ID, fixture.nullifier),
+      ).to.be.revertedWithCustomError(fixture.ballot, "NullifierHasNotVoted");
+
+      const cast = async (candidateId: bigint) => {
+        const domain = {
+          name: "VOTAR",
+          version: "1",
+          chainId: (await ethers.provider.getNetwork()).chainId,
+          verifyingContract: await fixture.ballot.getAddress(),
+        };
+        const message = {
+          electionId: ELECTION_ID,
+          nullifier: fixture.nullifier,
+          selectionHash: fixture.selectionHash,
+          candidateId,
+          timestamp: TIMESTAMP,
+        };
+        const signature = await fixture.voter.signTypedData(domain, VOTE_TYPE, message);
+        return fixture.ballot
+          .connect(fixture.voter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            fixture.validProof,
+            fixture.nullifier,
+            fixture.selectionHash,
+            TIMESTAMP,
+            fixture.voter.address,
+            signature,
+            candidateId,
+          );
+      };
+
+      await cast(101n);
+      expect(await fixture.ballot.lastVoteIndex(ELECTION_ID, fixture.nullifier)).to.equal(0n);
+
+      await cast(102n);
+      await cast(103n);
+      expect(await fixture.ballot.lastVoteIndex(ELECTION_ID, fixture.nullifier)).to.equal(2n);
     });
   });
 
@@ -420,6 +479,7 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
           await registry.getAddress(),
           0,
           0,
+          0, // TallyPolicy.LAST_VOTE_WINS
         ),
       ).to.be.revertedWithCustomError(ballotFactory, "InvalidMaxVotesPerVoter");
     });

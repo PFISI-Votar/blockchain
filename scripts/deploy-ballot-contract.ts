@@ -63,6 +63,7 @@ async function main() {
     voteRegistryAddress,
     maxVotesPerVoter,
     minIntervalSeconds,
+    0, // TallyPolicy.LAST_VOTE_WINS
   );
   await contract.waitForDeployment();
 

@@ -6,6 +6,7 @@ import {MerkleRootStore} from "../merkle/MerkleRootStore.sol";
 import {VoteRegistry} from "../registry/VoteRegistry.sol";
 import {BallotContract} from "../ballot/BallotContract.sol";
 import {AuditViewContract} from "../audit/AuditViewContract.sol";
+import {TallyPolicy} from "../types/TallyPolicy.sol";
 
 /**
  * @title ElectionFactory
@@ -24,11 +25,6 @@ import {AuditViewContract} from "../audit/AuditViewContract.sol";
  *      Access: only `DEFAULT_ADMIN_ROLE` (Multisig/Governor) may call {createElection}.
  */
 contract ElectionFactory is VotarAccessControl {
-    /// @notice Tally policy persisted with the election deployment (C4 RevoteConfig).
-    enum TallyPolicy {
-        LAST_VOTE_WINS
-    }
-
     /**
      * @notice Revote policy injected at election creation (immutable thereafter).
      * @dev `enabled` is passed to {VoteRegistry} at deploy (VOTAR-341).
@@ -111,7 +107,8 @@ contract ElectionFactory is VotarAccessControl {
             address(merkleRootStore),
             address(registry),
             revoteConfig.maxVotesPerVoter,
-            revoteConfig.minIntervalSeconds
+            revoteConfig.minIntervalSeconds,
+            revoteConfig.policy
         );
         AuditViewContract audit =
             new AuditViewContract(address(merkleRootStore), address(registry));

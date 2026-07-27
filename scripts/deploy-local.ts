@@ -102,6 +102,7 @@ async function main() {
     registryAddress,
     maxVotesPerVoter,
     minIntervalSeconds,
+    0, // TallyPolicy.LAST_VOTE_WINS
   );
   await ballot.waitForDeployment();
   const ballotAddress = await ballot.getAddress();
