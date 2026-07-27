@@ -116,6 +116,8 @@ describe("ElectionFactory — VOTAR-337", () => {
       expect(await ballot.voteRegistry()).to.equal(deployment.voteRegistry);
       // VOTAR-324 — maxVotesPerVoter is wired from RevoteConfig into BallotContract.
       expect(await ballot.maxVotesPerVoter()).to.equal(DEFAULT_REVOTE.maxVotesPerVoter);
+      // VOTAR-325 — minIntervalSeconds is wired from RevoteConfig into BallotContract.
+      expect(await ballot.minIntervalSeconds()).to.equal(DEFAULT_REVOTE.minIntervalSeconds);
       expect(await ballot.hasRole(await ballot.DEFAULT_ADMIN_ROLE(), admin.address))
         .to.equal(true);
 

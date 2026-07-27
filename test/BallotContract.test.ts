@@ -68,6 +68,7 @@ describe("BallotContract — US-339 UATs", () => {
       await store.getAddress(),
       await registry.getAddress(),
       1,
+      0,
     );
     await ballot.waitForDeployment();
 

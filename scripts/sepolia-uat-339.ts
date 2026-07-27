@@ -66,12 +66,14 @@ async function getBallotContractAddress(
   const admin = process.env.ADMIN_MULTISIG_ADDRESS!;
   console.log("[uat-339] Deploying BallotContract...");
   const maxVotesPerVoter = Number(process.env.MAX_VOTES_PER_VOTER ?? "1");
+  const minIntervalSeconds = Number(process.env.MIN_INTERVAL_SECONDS ?? "0");
   const factory = await ethers.getContractFactory("BallotContract");
   const contract = await factory.deploy(
     admin,
     merkleRootStoreAddress,
     voteRegistryAddress,
     maxVotesPerVoter,
+    minIntervalSeconds,
   );
   await contract.waitForDeployment();
   const address = await contract.getAddress();

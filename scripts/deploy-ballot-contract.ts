@@ -54,12 +54,15 @@ async function main() {
 
   // VOTAR-324 — production floor: 1 vote per voter unless overridden.
   const maxVotesPerVoter = Number(process.env.MAX_VOTES_PER_VOTER ?? "1");
+  // VOTAR-325 — production default: no cooldown unless overridden.
+  const minIntervalSeconds = Number(process.env.MIN_INTERVAL_SECONDS ?? "0");
   const factory = await ethers.getContractFactory("BallotContract");
   const contract = await factory.deploy(
     admin,
     merkleRootStoreAddress,
     voteRegistryAddress,
     maxVotesPerVoter,
+    minIntervalSeconds,
   );
   await contract.waitForDeployment();
 

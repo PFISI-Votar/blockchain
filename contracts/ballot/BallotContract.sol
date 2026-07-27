@@ -38,12 +38,19 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  *      requires >= 1). Only {castSignedVote} enforces the counter: {castVote} is the
  *      legacy US-339 Merkle-only path with no nullifier, no VoteRegistry write, and
  *      no production caller (the frontend always signs via {castSignedVote}).
+ *
+ *      VOTAR-325 — `minIntervalSeconds` enforces a minimum cooldown between signed
+ *      votes of the same nullifier (anti "voto en cadena" coercion mitigation).
+ *      0 disables the cooldown. Enforced against `block.timestamp`, so it cannot be
+ *      bypassed by manipulating the client's local clock.
  */
 contract BallotContract is VotarAccessControl, EIP712 {
     MerkleRootStore public immutable merkleRootStore;
     VoteRegistry public immutable voteRegistry;
     /// @notice VOTAR-324 — maximum signed votes a single nullifier may cast.
     uint16 public immutable maxVotesPerVoter;
+    /// @notice VOTAR-325 — minimum seconds between signed votes of a nullifier. 0 = disabled.
+    uint32 public immutable minIntervalSeconds;
 
     bytes32 private constant VOTE_TYPEHASH = keccak256(
         "Vote(uint256 electionId,bytes32 nullifier,bytes32 selectionHash,uint256 candidateId,uint256 timestamp)"
@@ -74,15 +81,19 @@ contract BallotContract is VotarAccessControl, EIP712 {
     error InvalidMaxVotesPerVoter();
     /// @notice Thrown when a nullifier already reached `maxVotesPerVoter` signed votes.
     error MaxVotesReached(uint256 electionId, uint16 maxVotes);
+    /// @notice Thrown when a nullifier re-votes before `minIntervalSeconds` elapsed.
+    error CooldownActive(uint256 electionId, uint256 remainingSeconds);
 
     mapping(uint256 electionId => mapping(bytes32 voterLeaf => bool hasVoted)) private _hasVoted;
     mapping(uint256 electionId => mapping(bytes32 nullifier => uint16 votesUsed)) private _votesUsed;
+    mapping(uint256 electionId => mapping(bytes32 nullifier => uint64 lastVoteAt)) private _lastVoteAt;
 
     constructor(
         address admin,
         address merkleRootStoreAddress,
         address voteRegistryAddress,
-        uint16 maxVotesPerVoter_
+        uint16 maxVotesPerVoter_,
+        uint32 minIntervalSeconds_
     ) VotarAccessControl(admin) EIP712("VOTAR", "1") {
         if (merkleRootStoreAddress == address(0)) revert MerkleRootStoreIsZeroAddress();
         if (voteRegistryAddress == address(0)) revert VoteRegistryIsZeroAddress();
@@ -90,6 +101,7 @@ contract BallotContract is VotarAccessControl, EIP712 {
         merkleRootStore = MerkleRootStore(merkleRootStoreAddress);
         voteRegistry = VoteRegistry(voteRegistryAddress);
         maxVotesPerVoter = maxVotesPerVoter_;
+        minIntervalSeconds = minIntervalSeconds_;
     }
 
     /**
@@ -154,6 +166,29 @@ contract BallotContract is VotarAccessControl, EIP712 {
         return _votesUsed[electionId][nullifier] != 0;
     }
 
+    /**
+     * @notice VOTAR-325 — Voter cooldown state anchored to the node's clock.
+     * @dev `blockTimestamp` lets clients reconcile their local countdown against the
+     *      network's real time instead of the OS clock (anti-manipulation, UAT-02).
+     * @return votesUsed Signed votes cast so far by this nullifier.
+     * @return lastVoteAt Unix timestamp of the last signed vote (0 if none yet).
+     * @return cooldownRemaining Seconds left before this nullifier may vote again (0 if unlocked).
+     * @return blockTimestamp Current `block.timestamp` as seen by this call.
+     */
+    function getVoterState(uint256 electionId, bytes32 nullifier)
+        external
+        view
+        returns (uint16 votesUsed, uint64 lastVoteAt, uint256 cooldownRemaining, uint256 blockTimestamp)
+    {
+        votesUsed = _votesUsed[electionId][nullifier];
+        lastVoteAt = _lastVoteAt[electionId][nullifier];
+        blockTimestamp = block.timestamp;
+        if (lastVoteAt > 0 && minIntervalSeconds > 0) {
+            uint256 unlockAt = uint256(lastVoteAt) + minIntervalSeconds;
+            cooldownRemaining = unlockAt > block.timestamp ? unlockAt - block.timestamp : 0;
+        }
+    }
+
     /// @notice Exposes the EIP-712 domain separator for off-chain signing clients.
     function domainSeparator() external view returns (bytes32) {
         return _domainSeparatorV4();
@@ -164,17 +199,25 @@ contract BallotContract is VotarAccessControl, EIP712 {
      *      Checks the nullifier ledger (and aligns with {VoteRegistry} vote entries):
      *      if the nullifier already has a prior vote and revote is off → {RevoteDisabled}.
      *      When revote is enabled, reuse is allowed so {VoteRegistry} can overwrite (VOTAR-344),
-     *      up to `maxVotesPerVoter` signed votes (VOTAR-324) → {MaxVotesReached} beyond that.
+     *      subject to the {CooldownActive} cooldown (VOTAR-325), up to `maxVotesPerVoter`
+     *      signed votes (VOTAR-324) → {MaxVotesReached} beyond that.
      */
     function _enforceRevotePolicy(uint256 electionId, bytes32 nullifier) private {
         uint16 used = _votesUsed[electionId][nullifier];
         if (used > 0 && !voteRegistry.revoteEnabled()) {
             revert RevoteDisabled();
         }
+        if (used > 0 && minIntervalSeconds > 0) {
+            uint256 unlockAt = uint256(_lastVoteAt[electionId][nullifier]) + minIntervalSeconds;
+            if (block.timestamp < unlockAt) {
+                revert CooldownActive(electionId, unlockAt - block.timestamp);
+            }
+        }
         if (used >= maxVotesPerVoter) {
             revert MaxVotesReached(electionId, maxVotesPerVoter);
         }
         _votesUsed[electionId][nullifier] = used + 1;
+        _lastVoteAt[electionId][nullifier] = uint64(block.timestamp);
     }
 
     function _assertValidVoteSignature(
