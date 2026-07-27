@@ -91,11 +91,17 @@ async function main() {
   const registryAddress = await registry.getAddress();
   console.log(`[deploy-local] VoteRegistry revoteEnabled=${revoteEnabled}`);
 
+  // VOTAR-324 — local default matches production floor: 1 vote per voter.
+  const maxVotesPerVoter = Number(process.env.MAX_VOTES_PER_VOTER ?? "1");
+  // VOTAR-325 — local default matches production floor: no cooldown.
+  const minIntervalSeconds = Number(process.env.MIN_INTERVAL_SECONDS ?? "0");
   const ballotFactory = await ethers.getContractFactory("BallotContract");
   const ballot = await ballotFactory.deploy(
     admin.address,
     contractAddress,
     registryAddress,
+    maxVotesPerVoter,
+    minIntervalSeconds,
   );
   await ballot.waitForDeployment();
   const ballotAddress = await ballot.getAddress();
@@ -188,8 +194,7 @@ async function main() {
       VITE_VOTE_REGISTRY_ADDRESS: registryAddress,
       VITE_AUDIT_VIEW_ADDRESS: auditViewAddress,
       // Hardhat account #0 — pays gas for castSignedVote (local/testnet only)
-      VITE_VOTE_TRANSMITTER_PRIVATE_KEY:
-        "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+      VITE_VOTE_TRANSMITTER_PRIVATE_KEY: HARDHAT_ACCOUNT_0_PRIVATE_KEY,
     },
     [
       "# Generado automáticamente por blockchain/scripts/deploy-local.ts",
