@@ -127,6 +127,10 @@ describe("ElectionFactory — VOTAR-337", () => {
       expect(await registry.hasRole(ballotRole, deployment.ballot)).to.equal(true);
       expect(await registry.hasRole(await registry.DEFAULT_ADMIN_ROLE(), admin.address))
         .to.equal(true);
+      // VOTAR-345 — admin can seal the candidate set on the freshly deployed registry.
+      expect(
+        await registry.hasRole(await registry.ELECTION_ADMIN_ROLE(), admin.address),
+      ).to.equal(true);
       expect(
         await registry.hasRole(
           await registry.DEFAULT_ADMIN_ROLE(),

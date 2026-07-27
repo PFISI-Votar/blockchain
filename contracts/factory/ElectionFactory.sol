@@ -129,6 +129,7 @@ contract ElectionFactory is VotarAccessControl {
         emit ElectionCreated(electionId, ballot, voteRegistry, auditView, revoteConfig);
 
         registry.grantRole(registry.BALLOT_ROLE(), address(ballotContract));
+        registry.grantRole(registry.ELECTION_ADMIN_ROLE(), admin);
         registry.grantRole(DEFAULT_ADMIN_ROLE, admin);
         registry.renounceRole(DEFAULT_ADMIN_ROLE, address(this));
     }

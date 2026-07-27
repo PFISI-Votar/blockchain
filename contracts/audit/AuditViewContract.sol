@@ -65,4 +65,18 @@ contract AuditViewContract {
     function verifyReceipt(bytes32 receiptHash) external view returns (bool) {
         return voteRegistry.verifyReceipt(receiptHash);
     }
+
+    /**
+     * @notice VOTAR-345 — Whether an id is votable: a sealed candidate, or blanco/nulo.
+     */
+    function isVotableCandidate(uint256 electionId, uint256 candidateId) external view returns (bool) {
+        return voteRegistry.isVotableCandidate(electionId, candidateId);
+    }
+
+    /**
+     * @notice VOTAR-345 — Whether the election's candidate set was already sealed.
+     */
+    function isCandidateSetSealed(uint256 electionId) external view returns (bool) {
+        return voteRegistry.isCandidateSetSealed(electionId);
+    }
 }

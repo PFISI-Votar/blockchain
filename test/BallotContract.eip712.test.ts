@@ -98,6 +98,13 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
     await registry
       .connect(admin)
       .grantRole(await registry.BALLOT_ROLE(), await ballot.getAddress());
+    await registry
+      .connect(admin)
+      .grantRole(await registry.ELECTION_ADMIN_ROLE(), admin.address);
+    // VOTAR-345 — seal the candidate set (all non-reserved ids used across this
+    // suite) before any castSignedVote, otherwise recordVote reverts with
+    // CandidateSetNotRegistered.
+    await registry.connect(admin).registerCandidates(ELECTION_ID, [101n, 102n, 103n]);
 
     await store.connect(admin).grantRole(await store.MERKLE_UPDATER_ROLE(), merkleUpdater.address);
     await store.connect(admin).grantRole(await store.ELECTION_ADMIN_ROLE(), admin.address);
@@ -771,6 +778,29 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       )
         .to.emit(registry, "VoteCast")
         .withArgs(ELECTION_ID, nullifier, VOTO_NULO, false);
+    });
+
+    it("VOTAR-345 — reverts InvalidCandidateId for a signed vote with an unregistered candidateId", async () => {
+      const unregisteredId = 999n;
+      const signature = await signVote(ephemeralSigner, { candidateId: unregisteredId });
+
+      await expect(
+        ballot
+          .connect(voter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            validProof,
+            nullifier,
+            selectionHash,
+            TIMESTAMP,
+            ephemeralSigner.address,
+            signature,
+            unregisteredId,
+          ),
+      )
+        .to.be.revertedWithCustomError(registry, "InvalidCandidateId")
+        .withArgs(ELECTION_ID, unregisteredId);
     });
   });
 
