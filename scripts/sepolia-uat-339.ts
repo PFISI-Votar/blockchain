@@ -74,6 +74,7 @@ async function getBallotContractAddress(
     voteRegistryAddress,
     maxVotesPerVoter,
     minIntervalSeconds,
+    0, // TallyPolicy.LAST_VOTE_WINS
   );
   await contract.waitForDeployment();
   const address = await contract.getAddress();

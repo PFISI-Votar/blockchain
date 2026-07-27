@@ -7,6 +7,7 @@ import {VoteRegistry} from "../registry/VoteRegistry.sol";
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import {TallyPolicy} from "../types/TallyPolicy.sol";
 
 /**
  * @title BallotContract
@@ -26,7 +27,11 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  *      The nullifier value is produced off-chain by VOTAR-353 and included in the
  *      signed Vote struct; this contract only verifies the EIP-712 signature and
  *      enforces uniqueness / revote policy. It does NOT derive nullifier semantics.
- *      LAST_VOTE_WINS when revote is enabled is completed in VOTAR-344.
+ *      VOTAR-326 — `tallyPolicy` is injected at construction and immutable: the only
+ *      supported value is {TallyPolicy.LAST_VOTE_WINS}, enforced by {VoteRegistry}
+ *      (decrement previous candidate / increment new candidate atomically, {VoteUpdated}
+ *      audit event). `_votesUsed` doubles as the on-chain `lastVoteIndex` (see
+ *      {lastVoteIndex}).
  *
  *      Design note (VOTAR-341): `revoteEnabled` is an immutable on {VoteRegistry}
  *      (one registry deployment per comicio today). Domain config is per-election
@@ -51,6 +56,8 @@ contract BallotContract is VotarAccessControl, EIP712 {
     uint16 public immutable maxVotesPerVoter;
     /// @notice VOTAR-325 — minimum seconds between signed votes of a nullifier. 0 = disabled.
     uint32 public immutable minIntervalSeconds;
+    /// @notice VOTAR-326 — tally policy frozen at deploy; only LAST_VOTE_WINS is supported.
+    TallyPolicy public immutable tallyPolicy;
 
     bytes32 private constant VOTE_TYPEHASH = keccak256(
         "Vote(uint256 electionId,bytes32 nullifier,bytes32 selectionHash,uint256 candidateId,uint256 timestamp)"
@@ -83,6 +90,10 @@ contract BallotContract is VotarAccessControl, EIP712 {
     error MaxVotesReached(uint256 electionId, uint16 maxVotes);
     /// @notice Thrown when a nullifier re-votes before `minIntervalSeconds` elapsed.
     error CooldownActive(uint256 electionId, uint256 remainingSeconds);
+    /// @notice Thrown when constructed with an unsupported {TallyPolicy}.
+    error InvalidTallyPolicy();
+    /// @notice Thrown by {lastVoteIndex} when the nullifier has no signed vote yet.
+    error NullifierHasNotVoted();
 
     mapping(uint256 electionId => mapping(bytes32 voterLeaf => bool hasVoted)) private _hasVoted;
     mapping(uint256 electionId => mapping(bytes32 nullifier => uint16 votesUsed)) private _votesUsed;
@@ -93,15 +104,18 @@ contract BallotContract is VotarAccessControl, EIP712 {
         address merkleRootStoreAddress,
         address voteRegistryAddress,
         uint16 maxVotesPerVoter_,
-        uint32 minIntervalSeconds_
+        uint32 minIntervalSeconds_,
+        TallyPolicy tallyPolicy_
     ) VotarAccessControl(admin) EIP712("VOTAR", "1") {
         if (merkleRootStoreAddress == address(0)) revert MerkleRootStoreIsZeroAddress();
         if (voteRegistryAddress == address(0)) revert VoteRegistryIsZeroAddress();
         if (maxVotesPerVoter_ == 0) revert InvalidMaxVotesPerVoter();
+        if (tallyPolicy_ != TallyPolicy.LAST_VOTE_WINS) revert InvalidTallyPolicy();
         merkleRootStore = MerkleRootStore(merkleRootStoreAddress);
         voteRegistry = VoteRegistry(voteRegistryAddress);
         maxVotesPerVoter = maxVotesPerVoter_;
         minIntervalSeconds = minIntervalSeconds_;
+        tallyPolicy = tallyPolicy_;
     }
 
     /**
@@ -187,6 +201,17 @@ contract BallotContract is VotarAccessControl, EIP712 {
             uint256 unlockAt = uint256(lastVoteAt) + minIntervalSeconds;
             cooldownRemaining = unlockAt > block.timestamp ? unlockAt - block.timestamp : 0;
         }
+    }
+
+    /**
+     * @notice VOTAR-326 — 0-based index of a nullifier's last recorded signed vote.
+     * @dev Reuses `_votesUsed` (already the on-chain count of signed votes cast):
+     *      `lastVoteIndex = votesUsed - 1`. Reverts if the nullifier has not voted yet.
+     */
+    function lastVoteIndex(uint256 electionId, bytes32 nullifier) external view returns (uint256) {
+        uint16 used = _votesUsed[electionId][nullifier];
+        if (used == 0) revert NullifierHasNotVoted();
+        return used - 1;
     }
 
     /// @notice Exposes the EIP-712 domain separator for off-chain signing clients.

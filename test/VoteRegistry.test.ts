@@ -90,11 +90,15 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
   describe("overwrite flag and atomic tally updates", () => {
     it("emits isOverwrite=true and adjusts tallies when candidate changes", async () => {
       expect(await registry.revoteEnabled()).to.equal(true);
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A);
+      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A))
+        .to.emit(registry, "VoteUpdated")
+        .withArgs(ELECTION_ID, VOTER_HASH, await registry.SIN_VOTO_PREVIO(), CANDIDATE_A);
 
       await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_B))
         .to.emit(registry, "VoteCast")
-        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_B, true);
+        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_B, true)
+        .and.to.emit(registry, "VoteUpdated")
+        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, CANDIDATE_B);
 
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(0n);
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_B)).to.equal(1n);
@@ -105,9 +109,117 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
 
       await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A))
         .to.emit(registry, "VoteCast")
-        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, true);
+        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, true)
+        .and.to.emit(registry, "VoteUpdated")
+        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, CANDIDATE_A);
 
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(1n);
+    });
+  });
+
+  describe("VOTAR-326: política LAST_WINS — VoteUpdated y protección de underflow", () => {
+    it("UAT-01 — tres votos secuenciales del mismo votante emiten 3 VoteUpdated y solo el último cuenta", async () => {
+      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A))
+        .to.emit(registry, "VoteUpdated")
+        .withArgs(ELECTION_ID, VOTER_HASH, await registry.SIN_VOTO_PREVIO(), CANDIDATE_A);
+
+      const CANDIDATE_C = 303n;
+      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_B))
+        .to.emit(registry, "VoteUpdated")
+        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, CANDIDATE_B);
+      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_C))
+        .to.emit(registry, "VoteUpdated")
+        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_B, CANDIDATE_C);
+
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(0n);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_B)).to.equal(0n);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_C)).to.equal(1n);
+
+      const [totalVotes] = await registry.getParticipationStats(ELECTION_ID);
+      expect(totalVotes).to.equal(1n);
+    });
+
+    it("UAT-02 — sumando incrementos/decrementos de VoteUpdated se reconstruye getTally exactamente", async () => {
+      const hash2 =
+        "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+      const CANDIDATE_C = 303n;
+
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_B);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_C);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash2, CANDIDATE_A);
+
+      const sinVotoPrevio = await registry.SIN_VOTO_PREVIO();
+      const filter = registry.filters.VoteUpdated(ELECTION_ID);
+      const events = await registry.queryFilter(filter);
+
+      const reconstructed = new Map<bigint, bigint>();
+      const bump = (candidateId: bigint, delta: bigint) =>
+        reconstructed.set(candidateId, (reconstructed.get(candidateId) ?? 0n) + delta);
+
+      for (const ev of events) {
+        const { oldCandidate, newCandidate } = ev.args;
+        if (oldCandidate !== sinVotoPrevio) bump(oldCandidate, -1n);
+        bump(newCandidate, 1n);
+      }
+
+      for (const candidateId of [CANDIDATE_A, CANDIDATE_B, CANDIDATE_C]) {
+        expect(reconstructed.get(candidateId) ?? 0n).to.equal(
+          await registry.getTally(ELECTION_ID, candidateId),
+        );
+      }
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(1n);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_B)).to.equal(0n);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_C)).to.equal(1n);
+    });
+
+    it("UAT-03 — revierte con TallyUnderflow en vez de envolver el contador a un valor negativo", async () => {
+      // El flujo público de recordVote nunca deja hasVoted=true con tally[candidateId]=0
+      // (la primera vez que hasVoted pasa a true, el tally del mismo candidato ya se
+      // incrementó). Para probar el guard de seguridad ante una inconsistencia de
+      // estado (el escenario que UAT-03 pide inyectar), se fuerza esa combinación
+      // inválida directamente en storage.
+      // Slot 0: AccessControl._roles, slot 1: Pausable._paused (heredados vía
+      // VotarAccessControl, que no agrega storage propio) — `_votes` es la primera
+      // variable de storage declarada en VoteRegistry, slot 2.
+      const votesSlot = 2n;
+      const electionSlot = ethers.keccak256(
+        ethers.AbiCoder.defaultAbiCoder().encode(["uint256", "uint256"], [ELECTION_ID, votesSlot]),
+      );
+      const voterStateSlot = BigInt(
+        ethers.keccak256(
+          ethers.AbiCoder.defaultAbiCoder().encode(["bytes32", "bytes32"], [VOTER_HASH, electionSlot]),
+        ),
+      );
+      // VoterState { uint256 candidateId; bool hasVoted; } -> 2 slots.
+      const candidateIdSlot = ethers.toBeHex(voterStateSlot, 32);
+      const hasVotedSlot = ethers.toBeHex(voterStateSlot + 1n, 32);
+
+      await ethers.provider.send("hardhat_setStorageAt", [
+        await registry.getAddress(),
+        candidateIdSlot,
+        ethers.toBeHex(CANDIDATE_A, 32),
+      ]);
+      await ethers.provider.send("hardhat_setStorageAt", [
+        await registry.getAddress(),
+        hasVotedSlot,
+        ethers.toBeHex(1, 32),
+      ]);
+
+      // Invariante forzada: hasVoted=true pero getTally(CANDIDATE_A) sigue en 0.
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(0n);
+      const [, hasVoted] = await registry.getVoterState(ELECTION_ID, VOTER_HASH);
+      expect(hasVoted).to.equal(true);
+
+      await expect(
+        registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_B),
+      )
+        .to.be.revertedWithCustomError(registry, "TallyUnderflow")
+        .withArgs(ELECTION_ID, CANDIDATE_A);
+
+      // La transacción revertida no debe haber tocado ningún contador.
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(0n);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_B)).to.equal(0n);
     });
   });
 

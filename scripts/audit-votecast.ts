@@ -7,6 +7,9 @@ import { ethers, network } from "hardhat";
  * Usage:
  *   VOTE_REGISTRY_ADDRESS=0x... ELECTION_ID=346 \
  *     npx hardhat run scripts/audit-votecast.ts --network localhost
+ *
+ * Optional FROM_BLOCK / TO_BLOCK — needed on free-tier RPCs (e.g. Sepolia via
+ * Infura/Alchemy free plan) that cap eth_getLogs to a small block range.
  */
 async function main() {
   const registryAddress = process.env.VOTE_REGISTRY_ADDRESS;
@@ -17,12 +20,15 @@ async function main() {
   const electionIdRaw = process.env.ELECTION_ID ?? "346";
   const electionId = BigInt(electionIdRaw);
 
+  const fromBlock = process.env.FROM_BLOCK ? Number(process.env.FROM_BLOCK) : undefined;
+  const toBlock = process.env.TO_BLOCK ? Number(process.env.TO_BLOCK) : undefined;
+
   const registry = await ethers.getContractAt("VoteRegistry", registryAddress);
   const VOTO_BLANCO = await registry.VOTO_BLANCO();
   const VOTO_NULO = await registry.VOTO_NULO();
 
   const filter = registry.filters.VoteCast(electionId);
-  const events = await registry.queryFilter(filter);
+  const events = await registry.queryFilter(filter, fromBlock, toBlock);
 
   const lastByVoter = new Map<string, { candidateId: bigint; isOverwrite: boolean; txHash: string }>();
   for (const ev of events) {
@@ -85,6 +91,52 @@ async function main() {
     console.log(
       `✔ UAT-04 sample: VoteCast topics=${sample.topics.length} (sig + electionId + voterHash only)`,
     );
+  }
+
+  // VOTAR-326 UAT-02 — independent cross-check: sum +1/-1 deltas straight from
+  // VoteUpdated (no last-writer-wins bookkeeping in this script itself) and
+  // compare against the same on-chain tallies.
+  const SIN_VOTO_PREVIO = await registry.SIN_VOTO_PREVIO();
+  const updatedFilter = registry.filters.VoteUpdated(electionId);
+  const updatedEvents = await registry.queryFilter(updatedFilter, fromBlock, toBlock);
+
+  const deltaTallies = new Map<bigint, bigint>();
+  const bump = (candidateId: bigint, delta: bigint) =>
+    deltaTallies.set(candidateId, (deltaTallies.get(candidateId) ?? 0n) + delta);
+  for (const ev of updatedEvents) {
+    const { oldCandidate, newCandidate } = ev.args;
+    if (oldCandidate !== SIN_VOTO_PREVIO) bump(oldCandidate, -1n);
+    bump(newCandidate, 1n);
+  }
+
+  console.log(`\n=== VOTAR-326 LAST_WINS cross-check (VoteUpdated deltas) ===`);
+  console.log(`VoteUpdated events: ${updatedEvents.length}`);
+  console.log("CandidateId                         Delta   On-chain tally  Match");
+
+  let deltaMismatches = 0;
+  const deltaCandidateIds = new Set<bigint>([...deltaTallies.keys(), ...candidateIds]);
+  for (const candidateId of [...deltaCandidateIds].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))) {
+    const fromDeltas = deltaTallies.get(candidateId) ?? 0n;
+    const onChain = await registry.getTally(electionId, candidateId);
+    if (fromDeltas === 0n && onChain === 0n) continue;
+    const ok = fromDeltas === onChain;
+    if (!ok) deltaMismatches += 1;
+
+    let label = candidateId.toString();
+    if (candidateId === VOTO_BLANCO) label = `${candidateId} (VOTO_BLANCO)`;
+    if (candidateId === VOTO_NULO) label = `${candidateId} (VOTO_NULO)`;
+
+    console.log(
+      `${label.padEnd(34)} ${fromDeltas.toString().padStart(6)}  ${onChain.toString().padStart(14)}  ${ok ? "OK" : "MISMATCH"}`,
+    );
+  }
+
+  console.log("");
+  if (deltaMismatches === 0) {
+    console.log("✔ VOTAR-326 UAT-02: VoteUpdated deltas match VoteRegistry.getTally exactly");
+  } else {
+    console.error(`✘ VOTAR-326 UAT-02: ${deltaMismatches} tally mismatch(es) from VoteUpdated deltas`);
+    process.exitCode = 1;
   }
 }
 

@@ -118,6 +118,8 @@ describe("ElectionFactory — VOTAR-337", () => {
       expect(await ballot.maxVotesPerVoter()).to.equal(DEFAULT_REVOTE.maxVotesPerVoter);
       // VOTAR-325 — minIntervalSeconds is wired from RevoteConfig into BallotContract.
       expect(await ballot.minIntervalSeconds()).to.equal(DEFAULT_REVOTE.minIntervalSeconds);
+      // VOTAR-326 — AC1: RevoteConfig.policy is wired immutably into BallotContract.
+      expect(await ballot.tallyPolicy()).to.equal(DEFAULT_REVOTE.policy);
       expect(await ballot.hasRole(await ballot.DEFAULT_ADMIN_ROLE(), admin.address))
         .to.equal(true);
 

@@ -13,7 +13,12 @@ import {VotarAccessControl} from "../access/VotarAccessControl.sol";
  *      and receipt inclusion checks (gas-free RPC reads).
  *      VOTAR-341 — When `revoteEnabled` is false, a second `recordVote` for the same
  *      nullifier reverts with {RevoteDisabled} (strict uniqueness). Overwrite /
- *      LAST_VOTE_WINS tallies apply only when `revoteEnabled` is true (VOTAR-344).
+ *      LAST_VOTE_WINS tallies apply only when `revoteEnabled` is true.
+ *      VOTAR-326 — Overwrite decrements the previous candidate's tally with an
+ *      explicit checked guard ({TallyUnderflow}) instead of `unchecked`, and emits
+ *      {VoteUpdated} for every recorded vote (including the first, `oldCandidate` =
+ *      {SIN_VOTO_PREVIO}) so an off-chain auditor can reconstruct tallies from events
+ *      alone (UAT-02).
  *
  *      Reserved candidate IDs for non-partisan ballots (blanco/nulo) are exposed as
  *      constants so auditors and UIs can filter those events the same way as
@@ -28,6 +33,9 @@ contract VoteRegistry is VotarAccessControl {
 
     /// @notice Reserved candidate id for null ballots.
     uint256 public constant VOTO_NULO = type(uint256).max;
+
+    /// @notice Sentinel `oldCandidate` for {VoteUpdated} when a nullifier votes for the first time.
+    uint256 public constant SIN_VOTO_PREVIO = type(uint256).max - 2;
 
     /// @notice Whether a nullifier may overwrite a previous vote (LAST_VOTE_WINS).
     /// @dev Immutable at deploy; production elections default to `false` (VOTAR-341).
@@ -48,8 +56,25 @@ contract VoteRegistry is VotarAccessControl {
         bool isOverwrite
     );
 
+    /**
+     * @notice VOTAR-326 — Public audit trail of every tally adjustment (LAST_VOTE_WINS).
+     * @dev Emitted on every {recordVote}, including the first vote for a nullifier
+     *      (`oldCandidate = SIN_VOTO_PREVIO`). Summing `+newCandidate` / `-oldCandidate`
+     *      (ignoring `SIN_VOTO_PREVIO`) across all events reconstructs {getTally} exactly
+     *      (UAT-02), without ever revealing voter identity.
+     */
+    event VoteUpdated(
+        uint256 indexed electionId,
+        bytes32 indexed voterNullifier,
+        uint256 oldCandidate,
+        uint256 newCandidate
+    );
+
     /// @notice Thrown when a nullifier already has a vote and revote is disabled.
     error RevoteDisabled();
+
+    /// @notice Thrown if an overwrite would decrement a candidate's tally below zero.
+    error TallyUnderflow(uint256 electionId, uint256 candidateId);
 
     struct VoterState {
         uint256 candidateId;
@@ -85,15 +110,17 @@ contract VoteRegistry is VotarAccessControl {
     {
         VoterState storage state = _votes[electionId][voterHash];
         bool isOverwrite = state.hasVoted;
+        uint256 previousCandidateId = isOverwrite ? state.candidateId : SIN_VOTO_PREVIO;
 
         if (isOverwrite) {
             if (!revoteEnabled) {
                 revert RevoteDisabled();
             }
             if (state.candidateId != candidateId) {
-                unchecked {
-                    _tallies[electionId][state.candidateId] -= 1;
+                if (_tallies[electionId][state.candidateId] == 0) {
+                    revert TallyUnderflow(electionId, state.candidateId);
                 }
+                _tallies[electionId][state.candidateId] -= 1;
                 _tallies[electionId][candidateId] += 1;
                 state.candidateId = candidateId;
             }
@@ -109,6 +136,7 @@ contract VoteRegistry is VotarAccessControl {
         }
 
         emit VoteCast(electionId, voterHash, candidateId, isOverwrite);
+        emit VoteUpdated(electionId, voterHash, previousCandidateId, candidateId);
     }
 
     /// @notice Returns the running tally for a candidate (includes reserved ids).

@@ -69,6 +69,7 @@ describe("BallotContract — US-339 UATs", () => {
       await registry.getAddress(),
       1,
       0,
+      0, // TallyPolicy.LAST_VOTE_WINS
     );
     await ballot.waitForDeployment();
 
