@@ -134,6 +134,23 @@ async function main() {
     await grantBallotTx.wait();
   }
 
+  // VOTAR-345 — admin needs ELECTION_ADMIN_ROLE on the registry itself to seal
+  // each election's candidate set via registerCandidates before it opens.
+  const registryElectionAdminRole = await registry.ELECTION_ADMIN_ROLE();
+  const hasRegistryElectionAdminRole = await registry.hasRole(
+    registryElectionAdminRole,
+    admin.address,
+  );
+  if (!hasRegistryElectionAdminRole) {
+    console.log(
+      `[deploy-local] Otorgando ELECTION_ADMIN_ROLE (VoteRegistry) a ${admin.address}...`,
+    );
+    const grantRegistryElectionAdminTx = await registry
+      .connect(admin)
+      .grantRole(registryElectionAdminRole, admin.address);
+    await grantRegistryElectionAdminTx.wait();
+  }
+
   const electionAdminRole = await contract.ELECTION_ADMIN_ROLE();
   const hasElectionAdminRole = await contract.hasRole(
     electionAdminRole,
@@ -172,7 +189,9 @@ async function main() {
       SEPOLIA_RPC_URL: "http://127.0.0.1:8545",
       MERKLE_ROOT_STORE_ADDRESS: contractAddress,
       VOTE_REGISTRY_ADDRESS: registryAddress,
+      VOTE_REGISTRY_CONTRACT_ADDRESS: registryAddress,
       AUDIT_VIEW_ADDRESS: auditViewAddress,
+      AUDIT_VIEW_CONTRACT_ADDRESS: auditViewAddress,
       BALLOT_CONTRACT_ADDRESS: ballotAddress,
       ELECTION_FACTORY_ADDRESS: electionFactoryAddress,
       MERKLE_UPDATER_PRIVATE_KEY: HARDHAT_ACCOUNT_1_PRIVATE_KEY,

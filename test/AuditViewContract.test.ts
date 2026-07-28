@@ -48,7 +48,10 @@ describe("AuditViewContract — VOTAR-350 public view UATs", () => {
     await registry.waitForDeployment();
 
     await registry.connect(admin).grantRole(await registry.BALLOT_ROLE(), ballotRole.address);
+    await registry.connect(admin).grantRole(await registry.ELECTION_ADMIN_ROLE(), admin.address);
     await store.connect(admin).grantRole(await store.ELECTION_ADMIN_ROLE(), admin.address);
+    // VOTAR-345 — seal the candidate set before any recordVote in this suite.
+    await registry.connect(admin).registerCandidates(ELECTION_ID, [CANDIDATE_A]);
 
     const auditFactory = await ethers.getContractFactory("AuditViewContract");
     const auditView = await auditFactory.deploy(

@@ -22,7 +22,14 @@ import {VotarAccessControl} from "../access/VotarAccessControl.sol";
  *
  *      Reserved candidate IDs for non-partisan ballots (blanco/nulo) are exposed as
  *      constants so auditors and UIs can filter those events the same way as
- *      positive votes. Full candidate-set validation remains VOTAR-345.
+ *      positive votes.
+ *
+ *      VOTAR-345 — Candidate set is sealed on-chain via {registerCandidates}
+ *      (one-shot, `ELECTION_ADMIN_ROLE`) before an election opens. Once sealed,
+ *      {recordVote} only accepts ids in that allowlist plus {VOTO_BLANCO} /
+ *      {VOTO_NULO}; any other id (including {SIN_VOTO_PREVIO}) reverts with
+ *      {InvalidCandidateId}, and voting before the set is sealed reverts with
+ *      {CandidateSetNotRegistered}.
  *
  *      Limitation: one `candidateId` per voterHash — multi-category ballots must
  *      project to a single audit id off-chain until a per-category model exists.
@@ -76,6 +83,24 @@ contract VoteRegistry is VotarAccessControl {
     /// @notice Thrown if an overwrite would decrement a candidate's tally below zero.
     error TallyUnderflow(uint256 electionId, uint256 candidateId);
 
+    /// @notice VOTAR-345 — Thrown when {registerCandidates} is called after the set is sealed.
+    error CandidateSetSealed(uint256 electionId);
+
+    /// @notice VOTAR-345 — Thrown by {recordVote} when the election has no sealed candidate set.
+    error CandidateSetNotRegistered(uint256 electionId);
+
+    /// @notice VOTAR-345 — Thrown when {registerCandidates} receives a reserved id (UAT-03).
+    error ReservedCandidateId(uint256 candidateId);
+
+    /// @notice VOTAR-345 — Thrown when {registerCandidates} is called with an empty set.
+    error EmptyCandidateSet();
+
+    /// @notice VOTAR-345 — Thrown by {recordVote} for an id outside the sealed set / reserved ids.
+    error InvalidCandidateId(uint256 electionId, uint256 candidateId);
+
+    /// @notice VOTAR-345 — Emitted once when a candidate set is sealed for an election.
+    event CandidateSetRegistered(uint256 indexed electionId, uint256 candidateCount);
+
     struct VoterState {
         uint256 candidateId;
         bool hasVoted;
@@ -87,6 +112,10 @@ contract VoteRegistry is VotarAccessControl {
     mapping(uint256 electionId => uint256 totalVotes) private _totalVotes;
     /// @notice Anonymous receipt anchors included on-chain (`voterHash` / nullifier).
     mapping(bytes32 receiptHash => bool included) private _receiptIncluded;
+    /// @notice VOTAR-345 — Sealed allowlist of votable candidate ids per election.
+    mapping(uint256 electionId => mapping(uint256 candidateId => bool allowed)) private _candidateAllowed;
+    /// @notice VOTAR-345 — Whether {registerCandidates} was already called for an election.
+    mapping(uint256 electionId => bool sealed_) private _candidateSetSealed;
 
     /**
      * @param admin DEFAULT_ADMIN_ROLE holder (Multisig / Governor).
@@ -108,6 +137,9 @@ contract VoteRegistry is VotarAccessControl {
         onlyRole(BALLOT_ROLE)
         whenNotPaused
     {
+        if (!_candidateSetSealed[electionId]) revert CandidateSetNotRegistered(electionId);
+        if (!isVotableCandidate(electionId, candidateId)) revert InvalidCandidateId(electionId, candidateId);
+
         VoterState storage state = _votes[electionId][voterHash];
         bool isOverwrite = state.hasVoted;
         uint256 previousCandidateId = isOverwrite ? state.candidateId : SIN_VOTO_PREVIO;
@@ -137,6 +169,41 @@ contract VoteRegistry is VotarAccessControl {
 
         emit VoteCast(electionId, voterHash, candidateId, isOverwrite);
         emit VoteUpdated(electionId, voterHash, previousCandidateId, candidateId);
+    }
+
+    /**
+     * @notice VOTAR-345 — Seals the votable candidate set for an election (one-shot).
+     * @dev Reserved ids ({VOTO_BLANCO}/{VOTO_NULO}/{SIN_VOTO_PREVIO}) cannot be registered
+     *      (UAT-03) — they are always votable/handled separately. Must be called before
+     *      the election opens; {recordVote} reverts with {CandidateSetNotRegistered} until
+     *      this runs, and this reverts with {CandidateSetSealed} if called twice.
+     */
+    function registerCandidates(uint256 electionId, uint256[] calldata ids)
+        external
+        onlyRole(ELECTION_ADMIN_ROLE)
+    {
+        if (_candidateSetSealed[electionId]) revert CandidateSetSealed(electionId);
+        if (ids.length == 0) revert EmptyCandidateSet();
+        for (uint256 i = 0; i < ids.length; ++i) {
+            uint256 id = ids[i];
+            if (id == VOTO_BLANCO || id == VOTO_NULO || id == SIN_VOTO_PREVIO) {
+                revert ReservedCandidateId(id);
+            }
+            _candidateAllowed[electionId][id] = true;
+        }
+        _candidateSetSealed[electionId] = true;
+        emit CandidateSetRegistered(electionId, ids.length);
+    }
+
+    /// @notice VOTAR-345 — Whether an id is votable: a sealed candidate, or blanco/nulo.
+    function isVotableCandidate(uint256 electionId, uint256 candidateId) public view returns (bool) {
+        if (candidateId == VOTO_BLANCO || candidateId == VOTO_NULO) return true;
+        return _candidateAllowed[electionId][candidateId];
+    }
+
+    /// @notice VOTAR-345 — Whether {registerCandidates} was already called for an election.
+    function isCandidateSetSealed(uint256 electionId) external view returns (bool) {
+        return _candidateSetSealed[electionId];
     }
 
     /// @notice Returns the running tally for a candidate (includes reserved ids).
