@@ -84,7 +84,7 @@ Faucets disponibles:
 
 Copiá la dirección que muestra el script en cualquiera de los dos links para cargarlo.
 
-Comprobá los fondos de la wallet accediendo a este enlace:
+Comprobá los fondos de la wallet accediendo a este enlace, o bien asociándola en **Metamask**
 - [https://sepolia.etherscan.io/address/TU_ADDRESS](https://sepolia.etherscan.io/address/TU_ADDRESS)
 
 
