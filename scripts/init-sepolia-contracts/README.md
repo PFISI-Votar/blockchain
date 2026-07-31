@@ -49,10 +49,14 @@ Repositorios/       → La raíz puede tener cualquier nombre
 
 ### 2 · Ejecutar el script de setup
 
+> ⚠️ Antes de empezar, asegurate que todos los repos tengan su .env.example, tal cual como está en Github (con placeholders y todo).
+
+> ⚠️ Si tus credenciales de la base de datos votar son distintas a la del .env.example, copialo y creá un .env con las credenciales de DB correctas.
+
 Desde el repositorio `blockchain/`, ejecutar:
 
 ```bash
-npx ts-node scripts/init-sepolia-contracts/setup-sepolia.ts https://eth-sepolia.g.alchemy.com/v2/TU_KEY_AQUI
+npx ts-node scripts/init-sepolia-contracts/setup-sepolia.ts https://eth-sepolia........
 ```
 
 El script va a:
@@ -61,7 +65,7 @@ El script va a:
 2. Generar una nueva wallet (address + private key).
 3. Escribir las variables necesarias en `blockchain/.env`, `back/.env` y `front/.env`.
    - Si algún `.env` no existe, lo copia desde `.env.example` antes de modificarlo.
-4. Ejecutar `deploy-sepolia-stack.ts --network sepolia`.
+4. Ejecutar `deploy-sepolia-stack.ts --network sepolia`. Para ello tenés que cargar fondos en tu wallet (seguí el instructivo que se muestra)
 5. Parsear las addresses resultantes del deploy y escribirlas en `back/.env`.
 6. Ejecutar los scripts de grant (`grant-election-admin-local.ts` y `grant-roles-dev.ts`).
 7. Ejecutar `npm run sync:election-factory` en `back/`.
@@ -70,11 +74,12 @@ El script va a:
 > ⏱️ El deploy puede tardar varios minutos dependiendo de la congestión de la red.
 
 
+
 ### 3 · Cargar fondos en la wallet
 
-Al final del setup, el script muestra la dirección de tu multisig wallet. **CARGALE ETH para poder operar** (crear comicios, votar, etc.).
+Durante el setup, el script muestra la dirección de tu multisig wallet. **CARGALE ETH para poder operar** (deploy-sepolia-stack.ts, crear comicios, votar, etc.).
 
-Faucets disponibles:
+► Faucets recomendados:
 
 - **🔵 Google**: 0,05 ETH cada 24hs  
   [https://cloud.google.com/application/web3/faucet/ethereum/sepolia](https://cloud.google.com/application/web3/faucet/ethereum/sepolia)
@@ -82,7 +87,13 @@ Faucets disponibles:
 - **🐱 Nyan Cat**: ~0,05 ETH cada 10 minutos (minando en background)  
   [https://sepolia-faucet.pk910.de/](https://sepolia-faucet.pk910.de/)
 
-Copiá la dirección que muestra el script en cualquiera de los dos links para cargarlo.
+
+► Listados de faucets:
+- [https://github.com/Mock-DAO/Awesome-List-of-Sepolia-Faucets](https://github.com/Mock-DAO/Awesome-List-of-Sepolia-Faucets)
+- [https://github.com/arddluma/awesome-list-testnet-faucets](https://github.com/arddluma/awesome-list-testnet-faucets)
+
+
+Copiá la dirección que muestra el script en cualquiera de los dos links para cargarlo. Si no sabés tu adress, seguí leyendo, abajo hay un script que te lo dice.
 
 Comprobá los fondos de la wallet accediendo a este enlace, o bien asociándola en **Metamask**
 - [https://sepolia.etherscan.io/address/TU_ADDRESS](https://sepolia.etherscan.io/address/TU_ADDRESS)
@@ -122,7 +133,7 @@ El script va a:
 npx ts-node scripts/init-sepolia-contracts/inspect-election.ts
 ```
 
-Si no sabés el ID del comicio, también podés ejecutarlo sin argumentos y el script te lo pide. Podés obtenerlo haciendo lo siguiente en PSQL:
+La ID del comicio es la ID que aparece en el front cuando lo creás. Sino también podés buscarlo en PSQL:
 ```PSQL
 votar=# SELECT * FROM eleccion;
 ```

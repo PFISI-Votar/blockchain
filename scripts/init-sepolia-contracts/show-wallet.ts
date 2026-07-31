@@ -30,26 +30,28 @@ function main() {
     process.exit(1);
   }
 
-  console.log("\n╔══════════════════════════════════════════════════════╗");
-  console.log("║              VOTAR — Multisig Wallet                 ║");
-  console.log("╠══════════════════════════════════════════════════════╣");
-  console.log("║                                                      ║");
-  console.log("║  ADMIN_MULTISIG_ADDRESS:                             ║");
-  console.log(`║  ${address}  ║`);
-  console.log("║                                                      ║");
-  console.log("╠══════════════════════════════════════════════════════╣");
-  console.log("║  Faucets para cargar ETH de prueba (Sepolia):        ║");
-  console.log("║                                                      ║");
-  console.log("║  🔵 Google (0.05 ETH / 24hs):                       ║");
-  console.log("║  https://cloud.google.com/application/web3/faucet/  ║");
-  console.log("║          ethereum/sepolia                            ║");
-  console.log("║                                                      ║");
-  console.log("║  🐱 Nyan Cat (~0.05 ETH / 10 min minando):          ║");
-  console.log("║  https://sepolia-faucet.pk910.de/                   ║");
-  console.log("╚══════════════════════════════════════════════════════╝\n");
-
-  console.log("📋 Dirección para copiar:");
-  console.log(`   ${address}\n`);
+  console.log("\n")
+  console.log("╔══════════════════════════════════════════════════════════════════════════════════════╗");
+  console.log("║                              VOTAR - MULTISIG WALLET                                 ║");
+  console.log("╠══════════════════════════════════════════════════════════════════════════════════════╣");
+  console.log("║                                                                                      ║");
+  console.log("║  ► Dirección:                                                                        ║");
+  console.log(`║  ${address}                                          ║`);
+  console.log("║                                                                                      ║");
+  console.log("╠══════════════════════════════════════════════════════════════════════════════════════╣");
+  console.log("║   Recordá mantener la wallet cargada. Podés usar:                                    ║");
+  console.log("║                                                                                      ║");
+  console.log("║  • Google (0.05 ETH cada 24hs):                                                      ║");
+  console.log("║  https://cloud.google.com/application/web3/faucet/ethereum/sepolia                   ║");
+  console.log("║                                                                                      ║");
+  console.log("║  • Nyan Cat (Miná ~0.05 ETH cada 1 minuto):                                          ║");
+  console.log("║  https://sepolia-faucet.pk910.de/                                                    ║");
+  console.log("║                                                                                      ║");
+  console.log("║                                                                                      ║");
+  console.log("║  ► Revisá tus fondos en:                                                             ║");
+  console.log(`║  https://sepolia.etherscan.io/address/${address}     ║`);
+  console.log("║                                                                                      ║");
+  console.log("╚══════════════════════════════════════════════════════════════════════════════════════╝\n");
 }
 
 main();

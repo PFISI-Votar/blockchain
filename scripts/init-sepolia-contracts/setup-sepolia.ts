@@ -106,15 +106,52 @@ function run(cmd: string, cwd?: string): void {
 }
 
 /**
+ * Igual que run(), pero tolera el crash de libuv en Windows (código 3221226505 / 0xC0000409)
+ * que hardhat lanza al cerrar conexiones async en PowerShell. El script ya terminó OK.
+ * Para distinguir un fallo real de un falso positivo, captura el output y busca señales de error.
+ */
+function runGrant(cmd: string, cwd?: string): void {
+  console.log(`\n  ▶ ${cmd}${cwd ? ` (en ${cwd})` : ""}`);
+  const result = spawnSync(cmd, {
+    cwd,
+    shell: true,
+    stdio: ["inherit", "pipe", "pipe"],
+    env: { ...process.env },
+  });
+
+  const stdout = result.stdout?.toString() ?? "";
+  const stderr = result.stderr?.toString() ?? "";
+  process.stdout.write(stdout);
+  if (stderr) process.stderr.write(stderr);
+
+  const WINDOWS_LIBUV_CRASH = 3221226505; // 0xC0000409 — assert en src/win/async.c al cerrar
+  const exitOk = result.status === 0;
+  const windowsCrash = result.status === WINDOWS_LIBUV_CRASH;
+
+  if (!exitOk && !windowsCrash) {
+    throw new Error(`Comando falló con código ${result.status}: ${cmd}`);
+  }
+
+  if (windowsCrash) {
+    // Verificar que el output indica éxito real antes de ignorar el crash
+    const hasError = /^error:/im.test(stdout + stderr) || /threw an error/i.test(stdout + stderr);
+    if (hasError) {
+      throw new Error(`El script de grant falló (crash de Windows con output de error): ${cmd}`);
+    }
+    console.log("  ⚠️  (Windows: crash de libuv al cerrar — el grant se ejecutó correctamente)");
+  }
+}
+
+/**
  * Ejecuta un comando y captura su stdout+stderr como string.
  */
 function runCapture(cmd: string, cwd?: string): string {
-  return execSync(cmd, {
+  const opts: import("child_process").ExecSyncOptionsWithStringEncoding = {
     cwd,
-    shell: true,
     env: { ...process.env },
     encoding: "utf8",
-  });
+  };
+  return execSync(cmd, opts);
 }
 
 /** Parsea las addresses del output de deploy-sepolia-stack.ts */
@@ -132,6 +169,24 @@ function parseDeployOutput(output: string): {
     merkleRootStore: merkleMatch[1],
     electionFactory: factoryMatch[1],
   };
+}
+
+/** Pausa la ejecución hasta que el usuario presione Enter. Funciona en Windows, Linux y Mac. */
+function waitForEnter(message: string): Promise<void> {
+  process.stdout.write(message);
+  return new Promise((resolve) => {
+    // En modo no-interactivo (ej: pipes), resolver inmediatamente
+    if (!process.stdin.isTTY) {
+      process.stdout.write("\n");
+      resolve();
+      return;
+    }
+    const rl = require("readline").createInterface({ input: process.stdin, output: process.stdout });
+    rl.question("", () => {
+      rl.close();
+      resolve();
+    });
+  });
 }
 
 // ─── Main ───────────────────────────────────────────────────────────────────
@@ -189,6 +244,9 @@ async function main() {
     PRIVATE_KEY: privateKey,
     ADMIN_MULTISIG_ADDRESS: address,
     GRANT_TARGET: address,
+    // Vaciar el placeholder del .env.example: deploy-sepolia-stack.ts interpreta
+    // un valor vacío o ausente como "desplegar un nuevo contrato".
+    MERKLE_ROOT_STORE_ADDRESS: "",
   });
   console.log("  ✅ blockchain/.env actualizado.");
 
@@ -217,7 +275,33 @@ async function main() {
   });
   console.log("  ✅ front/.env actualizado.");
 
-  // 7. Deploy
+  // 7. Pausa: el usuario debe cargar fondos antes del deploy
+  console.log("\n")
+  console.log("╔══════════════════════════════════════════════════════════════════════════════════════╗");
+  console.log("║               (!)   ANTES DE CONTINUAR: CARGÁ FONDOS EN LA WALLET   (!)              ║");
+  console.log("╠══════════════════════════════════════════════════════════════════════════════════════╣");
+  console.log("║                 → Sin fondos el deploy va a fallar por falta de gas ←                ║");
+  console.log("║                                                                                      ║");
+  console.log("║  ► Dirección a cargar:                                                               ║");
+  console.log(`║  ${address}                                          ║`);
+  console.log("║                                                                                      ║");
+  console.log("║  ► Faucets:                                                                          ║");
+  console.log("║  • Google (0.05 ETH cada 24hs):                                                      ║");
+  console.log("║  https://cloud.google.com/application/web3/faucet/ethereum/sepolia                   ║");
+  console.log("║                                                                                      ║");
+  console.log("║  • Nyan Cat (Miná ~0.05 ETH cada 1 minuto):                                          ║");
+  console.log("║  https://sepolia-faucet.pk910.de/                                                    ║");
+  console.log("║                                                                                      ║");
+  console.log("║                                                                                      ║");
+  console.log("║  ► Revisá tus fondos en:                                                             ║");
+  console.log(`║  https://sepolia.etherscan.io/address/${address}     ║`);
+  console.log("║                                                                                      ║");
+  console.log("╚══════════════════════════════════════════════════════════════════════════════════════╝\n");
+  console.log(`→ Una vez que hayas depositado fondos, presioná ENTER para continuar ← `);
+
+  await waitForEnter("");
+
+  // 8. Deploy
   console.log("\n── Paso 5: Ejecutando deploy-sepolia-stack.ts ─────────");
   console.log("  (Esto puede tardar varios minutos según la red)\n");
 
@@ -255,56 +339,57 @@ async function main() {
   console.log("  MERKLE_ROOT_STORE_ADDRESS:", merkleRootStore);
   console.log("  ELECTION_FACTORY_ADDRESS: ", electionFactory);
 
-  // 9. Escribir addresses en back/.env y front/.env
-  console.log("\n── Paso 7: Escribiendo addresses en back y front ──────");
+  // 9. Escribir addresses en blockchain/.env, back/.env y front/.env
+  console.log("\n── Paso 7: Escribiendo addresses en blockchain, back y front ──────");
+  // Ahora sí escribimos la address real en blockchain/.env para que los scripts de grant la lean
+  writeEnvVars(blockchainEnv, {
+    MERKLE_ROOT_STORE_ADDRESS: merkleRootStore,
+  });
   writeEnvVars(backEnv, {
     MERKLE_ROOT_STORE_ADDRESS: merkleRootStore,
     ELECTION_FACTORY_ADDRESS: electionFactory,
   });
-  writeEnvVars(frontEnv, {
-    // El front normalmente no necesita estas, pero las dejamos por si el .env.example las tiene
-    // Si no estaban en el template, simplemente se agregan al final y no molestan.
-  });
-  console.log("  ✅ back/.env actualizado con addresses del deploy.");
+  console.log("  ✅ blockchain/.env, back/.env actualizados con addresses del deploy.");
 
   // 10. Scripts de grant
   console.log("\n── Paso 8: Ejecutando scripts de grant ────────────────");
-  run("npx hardhat run scripts/grant-election-admin-local.ts --network sepolia", blockchainRoot);
-  run("npx hardhat run scripts/grant-roles-dev.ts --network sepolia", blockchainRoot);
+  runGrant("npx hardhat run scripts/grant-election-admin-local.ts --network sepolia", blockchainRoot);
+  runGrant("npx hardhat run scripts/grant-roles-dev.ts --network sepolia", blockchainRoot);
   console.log("  ✅ Grants ejecutados.");
 
-  // 11. sync:election-factory en back
-  console.log("\n── Paso 9: Sincronizando ElectionFactory en backend ───");
+  // 11. Migraciones + sync:election-factory en back
+  console.log("\n── Paso 9: Aplicando migraciones de base de datos ─────");
+  console.log("  (Si ya están aplicadas, TypeORM no hace ningún cambio)");
+  run("npm run migrate", backRoot);
+  console.log("  ✅ Migraciones OK.");
+
+  console.log("\n── Paso 10: Sincronizando ElectionFactory en backend ──");
   run("npm run sync:election-factory", backRoot);
   console.log("  ✅ Sync completado.");
 
   // 12. Resumen final
-  console.log("\n╔══════════════════════════════════════════════════════╗");
-  console.log("║               ✅  Setup completado                   ║");
-  console.log("╠══════════════════════════════════════════════════════╣");
-  console.log("║                                                      ║");
-  console.log("║  MULTISIG WALLET ADDRESS:                            ║");
-  console.log(`║  ${address}  ║`);
-  console.log("║                                                      ║");
-  console.log("╠══════════════════════════════════════════════════════╣");
-  console.log("║  ⚠️  NECESITÁS FONDOS EN ESA DIRECCIÓN PARA OPERAR  ║");
-  console.log("║                                                      ║");
-  console.log("║  Conseguí ETH de prueba en alguno de estos faucets:  ║");
-  console.log("║                                                      ║");
-  console.log("║  🔵 Google (0.05 ETH / 24hs):                       ║");
-  console.log("║  https://cloud.google.com/application/web3/faucet/  ║");
-  console.log("║          ethereum/sepolia                            ║");
-  console.log("║                                                      ║");
-  console.log("║  🐱 Nyan Cat (~0.05 ETH / 10 min minando):          ║");
-  console.log("║  https://sepolia-faucet.pk910.de/                   ║");
-  console.log("║                                                      ║");
-  console.log("║  Copiá la dirección de arriba en cualquiera de      ║");
-  console.log("║  los dos links para recibir los fondos.             ║");
-  console.log("╚══════════════════════════════════════════════════════╝\n");
-
-  // También mostrar la dirección sola al final para fácil copiado
-  console.log("📋 Dirección para copiar en el faucet:");
-  console.log(`   ${address}\n`);
+  console.log("\n")
+  console.log("╔══════════════════════════════════════════════════════════════════════════════════════╗");
+  console.log("║                                   SETUP COMPLETADO :)                                ║");
+  console.log("╠══════════════════════════════════════════════════════════════════════════════════════╣");
+  console.log("║                                                                                      ║");
+  console.log("║  ► Dirección a cargar:                                                               ║");
+  console.log(`║  ${address}                                          ║`);
+  console.log("║                                                                                      ║");
+  console.log("╠══════════════════════════════════════════════════════════════════════════════════════╣");
+  console.log("║   Recordá mantener la wallet cargada. Podés usar:                                    ║");
+  console.log("║                                                                                      ║");
+  console.log("║  • Google (0.05 ETH cada 24hs):                                                      ║");
+  console.log("║  https://cloud.google.com/application/web3/faucet/ethereum/sepolia                   ║");
+  console.log("║                                                                                      ║");
+  console.log("║  • Nyan Cat (Miná ~0.05 ETH cada 1 minuto):                                          ║");
+  console.log("║  https://sepolia-faucet.pk910.de/                                                    ║");
+  console.log("║                                                                                      ║");
+  console.log("║                                                                                      ║");
+  console.log("║  ► Revisá tus fondos en:                                                             ║");
+  console.log(`║  https://sepolia.etherscan.io/address/${address}     ║`);
+  console.log("║                                                                                      ║");
+  console.log("╚══════════════════════════════════════════════════════════════════════════════════════╝\n");
 }
 
 main().catch((err) => {

@@ -129,15 +129,15 @@ async function main() {
   const voteRegistry = result[1] ?? result.voteRegistry;
   const auditView = result[2] ?? result.auditView;
 
-  console.log("╔══════════════════════════════════════════════════════╗");
-  console.log(`║         Comicio ID: ${String(electionId).padEnd(33)}║`);
-  console.log("╠══════════════════════════════════════════════════════╣");
-  console.log("║                                                      ║");
+  console.log("╔═════════════════════════════════════════════════════════════╗");
+  console.log(`║         Comicio ID: ${String(electionId).padEnd(40)}║`);
+  console.log("╠═════════════════════════════════════════════════════════════╣");
+  console.log("║                                                             ║");
   console.log(`║  Ballot:        ${ballot}  ║`);
   console.log(`║  VoteRegistry:  ${voteRegistry}  ║`);
   console.log(`║  AuditView:     ${auditView}  ║`);
-  console.log("║                                                      ║");
-  console.log("╚══════════════════════════════════════════════════════╝\n");
+  console.log("║                                                             ║");
+  console.log("╚═════════════════════════════════════════════════════════════╝\n");
 
   // Links a Etherscan
   const base = "https://sepolia.etherscan.io/address";
