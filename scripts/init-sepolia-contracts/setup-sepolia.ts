@@ -259,7 +259,7 @@ async function main() {
     MERKLE_UPDATER_PRIVATE_KEY: privateKey,
     ELECTION_ADMIN_PRIVATE_KEY: privateKey,
     AUDIT_VIEW_ADDRESS: address,
-    RECIBO_SIGNING_PRIVATE_KEY: address,
+    RECIBO_SIGNING_PRIVATE_KEY: privateKey,
   });
   console.log("  ✅ back/.env actualizado.");
 

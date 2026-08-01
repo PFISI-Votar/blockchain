@@ -157,7 +157,7 @@ votar=# SELECT * FROM eleccion;
 | `MERKLE_UPDATER_PRIVATE_KEY` | Wallet generada |
 | `ELECTION_ADMIN_PRIVATE_KEY` | Wallet generada |
 | `AUDIT_VIEW_ADDRESS` | Address de la wallet |
-| `RECIBO_SIGNING_PRIVATE_KEY` | Address de la wallet |
+| `RECIBO_SIGNING_PRIVATE_KEY` | Private key generada |
 | `MERKLE_ROOT_STORE_ADDRESS` | Output del deploy |
 | `ELECTION_FACTORY_ADDRESS` | Output del deploy |
 
