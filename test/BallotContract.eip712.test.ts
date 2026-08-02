@@ -84,7 +84,7 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
     const ballotFactory = await ethers.getContractFactory("BallotContract");
     // VOTAR-324 — generous default so pre-existing tests never hit MaxVotesReached.
     // VOTAR-325 — default 0 (no cooldown) so pre-existing back-to-back casts never
-    // hit CooldownActive.
+    // hit RetryTooSoon.
     const ballot = await ballotFactory.deploy(
       admin.address,
       await store.getAddress(),
@@ -563,7 +563,7 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       return cast;
     }
 
-    it("UAT-01 — rechaza el segundo voto con CooldownActive antes de cumplirse el intervalo", async () => {
+    it("UAT-01 — rechaza el segundo voto con RetryTooSoon antes de cumplirse el intervalo", async () => {
       const fixture = await deployFixture({
         revoteEnabled: true,
         maxVotesPerVoter: 5,
@@ -578,7 +578,7 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       const expectedRemaining = 300 - (nextTimestamp - voteTimestamp);
 
       await expect(cast())
-        .to.be.revertedWithCustomError(fixture.ballot, "CooldownActive")
+        .to.be.revertedWithCustomError(fixture.ballot, "RetryTooSoon")
         .withArgs(ELECTION_ID, expectedRemaining);
     });
 
@@ -595,7 +595,7 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
     });
 
-    it("precedencia: revierte RevoteDisabled (no CooldownActive) cuando el re-voto está apagado", async () => {
+    it("precedencia: revierte RevoteDisabled (no RetryTooSoon) cuando el re-voto está apagado", async () => {
       const fixture = await deployFixture({
         revoteEnabled: false,
         maxVotesPerVoter: 5,
