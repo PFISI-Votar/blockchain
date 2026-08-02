@@ -182,4 +182,53 @@ describe("ElectionFactory — VOTAR-337", () => {
       ).to.be.revertedWithCustomError(factory, "EnforcedPause");
     });
   });
+
+  describe("lockConfig — VOTAR-327", () => {
+    beforeEach(async () => {
+      await factory.connect(admin).createElection(ELECTION_ID, DEFAULT_REVOTE);
+    });
+
+    it("emits ConfigurationLocked and sets isConfigLocked=true", async () => {
+      expect(await factory.isConfigLocked(ELECTION_ID)).to.equal(false);
+
+      await expect(factory.connect(admin).lockConfig(ELECTION_ID))
+        .to.emit(factory, "ConfigurationLocked")
+        .withArgs(ELECTION_ID);
+
+      expect(await factory.isConfigLocked(ELECTION_ID)).to.equal(true);
+    });
+
+    it("reverts with ConfigLocked on second call", async () => {
+      await factory.connect(admin).lockConfig(ELECTION_ID);
+
+      await expect(factory.connect(admin).lockConfig(ELECTION_ID))
+        .to.be.revertedWithCustomError(factory, "ConfigLocked")
+        .withArgs(ELECTION_ID);
+    });
+
+    it("reverts with ElectionDoesNotExist when election was never created", async () => {
+      const unknownElectionId = 999n;
+      await expect(factory.connect(admin).lockConfig(unknownElectionId))
+        .to.be.revertedWithCustomError(factory, "ElectionDoesNotExist")
+        .withArgs(unknownElectionId);
+    });
+
+    it("reverts when caller lacks DEFAULT_ADMIN_ROLE", async () => {
+      await expect(
+        factory.connect(stranger).lockConfig(ELECTION_ID),
+      ).to.be.revertedWithCustomError(
+        factory,
+        "AccessControlUnauthorizedAccount",
+      );
+    });
+
+    it("reverts when factory is paused", async () => {
+      await factory.connect(admin).grantRole(await factory.PAUSER_ROLE(), admin.address);
+      await factory.connect(admin).pause();
+
+      await expect(
+        factory.connect(admin).lockConfig(ELECTION_ID),
+      ).to.be.revertedWithCustomError(factory, "EnforcedPause");
+    });
+  });
 });

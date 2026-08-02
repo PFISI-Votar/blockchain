@@ -10,6 +10,7 @@ import {VotarAccessControl} from "../access/VotarAccessControl.sol";
  * @dev US-335 — Publication of the padron integrity seal on-chain.
  * @dev US-336 — Hermetic seal: prevents padron modification once voting starts.
  * @dev VOTAR-321 — Voting window (endTime) for autonomous on-chain closure.
+ * @dev VOTAR-327 — Seals the voting window against changes once locked.
  */
 contract MerkleRootStore is VotarAccessControl {
     /// @notice Election lifecycle states.
@@ -40,14 +41,19 @@ contract MerkleRootStore is VotarAccessControl {
     /// @notice Emitted when the voting window is configured (VOTAR-321).
     event ElectionWindowSet(uint256 indexed electionId, uint256 startTime, uint256 endTime);
 
+    /// @notice Emitted when the voting window configuration is sealed (VOTAR-327).
+    event ConfigurationLocked(uint256 indexed electionId);
+
     error RootIsZero();
     error RootAlreadyPublished(uint256 electionId);
     error RootLocked(uint256 electionId);
     error InvalidElectionWindow();
+    error ConfigLocked(uint256 electionId);
 
     mapping(uint256 electionId => MerkleRootRecord) private _roots;
     mapping(uint256 electionId => ElectionState) private _electionStates;
     mapping(uint256 electionId => ElectionWindow) private _electionWindows;
+    mapping(uint256 electionId => bool locked) private _configLocked;
 
     constructor(address admin) VotarAccessControl(admin) {}
 
@@ -74,9 +80,29 @@ contract MerkleRootStore is VotarAccessControl {
         external
         onlyRole(ELECTION_ADMIN_ROLE)
     {
+        if (_configLocked[electionId]) revert ConfigLocked(electionId);
         if (endTime == 0 || endTime <= startTime) revert InvalidElectionWindow();
         _electionWindows[electionId] = ElectionWindow({startTime: startTime, endTime: endTime});
         emit ElectionWindowSet(electionId, startTime, endTime);
+    }
+
+    /**
+     * @notice Seals the voting window against further changes (VOTAR-327).
+     * @dev Deliberately does NOT gate {setElectionState}: after OPEN, the backend
+     *      still needs to call setElectionState(CLOSED) and setElectionState(TALLIED)
+     *      to advance the lifecycle. Locking state transitions here would brick the
+     *      comicio after opening. Only the voting window, which has no legitimate
+     *      reason to change once voting is live, is protected.
+     */
+    function lockConfig(uint256 electionId) external onlyRole(ELECTION_ADMIN_ROLE) {
+        if (_configLocked[electionId]) revert ConfigLocked(electionId);
+        _configLocked[electionId] = true;
+        emit ConfigurationLocked(electionId);
+    }
+
+    /// @notice Whether {lockConfig} was already called for `electionId`.
+    function isConfigLocked(uint256 electionId) external view returns (bool) {
+        return _configLocked[electionId];
     }
 
     /**
