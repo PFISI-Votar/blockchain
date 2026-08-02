@@ -491,4 +491,59 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
       expect(await registry.isCandidateSetSealed(unsealedElection)).to.equal(false);
     });
   });
+
+  describe("VOTAR-344 — UAT-04: 5 re-votos concurrentes sin race conditions", () => {
+    const CANDIDATE_C = 303n;
+
+    it("los tallies finales reflejan exactamente las 5 transiciones aunque se envíen simultáneamente", async () => {
+      const voters = Array.from({ length: 5 }, (_, i) =>
+        ethers.keccak256(ethers.toUtf8Bytes(`uat04-voter-${i}`)),
+      );
+
+      // Voto inicial (secuencial, fuera del escenario bajo prueba): 3 votantes
+      // por CANDIDATE_A y 2 por CANDIDATE_B.
+      for (let i = 0; i < voters.length; i++) {
+        await registry
+          .connect(ballotRole)
+          .recordVote(ELECTION_ID, voters[i], i < 3 ? CANDIDATE_A : CANDIDATE_B);
+      }
+
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(3n);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_B)).to.equal(2n);
+
+      // Re-voto simultáneo: se desactiva el automine para que las 5 txs queden
+      // encoladas en el mempool a la vez (nonces explícitos) y se minan juntas en
+      // un único bloque, en vez de esperarse secuencialmente una a otra.
+      // Los 3 votantes de A cambian a C, los 2 votantes de B cambian a A.
+      const newChoices = [CANDIDATE_C, CANDIDATE_C, CANDIDATE_C, CANDIDATE_A, CANDIDATE_A];
+      const startNonce = await ethers.provider.getTransactionCount(ballotRole.address);
+      await ethers.provider.send("evm_setAutomine", [false]);
+      try {
+        await Promise.all(
+          voters.map((voterHash, i) =>
+            registry
+              .connect(ballotRole)
+              .recordVote(ELECTION_ID, voterHash, newChoices[i], { nonce: startNonce + i }),
+          ),
+        );
+        await ethers.provider.send("evm_mine", []);
+      } finally {
+        await ethers.provider.send("evm_setAutomine", [true]);
+      }
+
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(2n);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_B)).to.equal(0n);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_C)).to.equal(3n);
+
+      // Los re-votos (overwrites) no crean nuevos votantes únicos.
+      const [totalVotes] = await registry.getParticipationStats(ELECTION_ID);
+      expect(totalVotes).to.equal(5n);
+
+      for (let i = 0; i < voters.length; i++) {
+        const [candidateId, hasVoted] = await registry.getVoterState(ELECTION_ID, voters[i]);
+        expect(hasVoted).to.equal(true);
+        expect(candidateId).to.equal(newChoices[i]);
+      }
+    });
+  });
 });
