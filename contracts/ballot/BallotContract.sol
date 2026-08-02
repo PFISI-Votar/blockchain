@@ -89,7 +89,7 @@ contract BallotContract is VotarAccessControl, EIP712 {
     /// @notice Thrown when a nullifier already reached `maxVotesPerVoter` signed votes.
     error MaxVotesReached(uint256 electionId, uint16 maxVotes);
     /// @notice Thrown when a nullifier re-votes before `minIntervalSeconds` elapsed.
-    error CooldownActive(uint256 electionId, uint256 remainingSeconds);
+    error RetryTooSoon(uint256 electionId, uint256 remainingSeconds);
     /// @notice Thrown when constructed with an unsupported {TallyPolicy}.
     error InvalidTallyPolicy();
     /// @notice Thrown by {lastVoteIndex} when the nullifier has no signed vote yet.
@@ -224,7 +224,7 @@ contract BallotContract is VotarAccessControl, EIP712 {
      *      Checks the nullifier ledger (and aligns with {VoteRegistry} vote entries):
      *      if the nullifier already has a prior vote and revote is off → {RevoteDisabled}.
      *      When revote is enabled, reuse is allowed so {VoteRegistry} can overwrite (VOTAR-344),
-     *      subject to the {CooldownActive} cooldown (VOTAR-325), up to `maxVotesPerVoter`
+     *      subject to the {RetryTooSoon} cooldown (VOTAR-325), up to `maxVotesPerVoter`
      *      signed votes (VOTAR-324) → {MaxVotesReached} beyond that.
      */
     function _enforceRevotePolicy(uint256 electionId, bytes32 nullifier) private {
@@ -235,7 +235,7 @@ contract BallotContract is VotarAccessControl, EIP712 {
         if (used > 0 && minIntervalSeconds > 0) {
             uint256 unlockAt = uint256(_lastVoteAt[electionId][nullifier]) + minIntervalSeconds;
             if (block.timestamp < unlockAt) {
-                revert CooldownActive(electionId, unlockAt - block.timestamp);
+                revert RetryTooSoon(electionId, unlockAt - block.timestamp);
             }
         }
         if (used >= maxVotesPerVoter) {
