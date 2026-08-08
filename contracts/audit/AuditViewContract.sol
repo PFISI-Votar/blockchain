@@ -79,4 +79,18 @@ contract AuditViewContract {
     function isCandidateSetSealed(uint256 electionId) external view returns (bool) {
         return voteRegistry.isCandidateSetSealed(electionId);
     }
+
+    /**
+     * @notice VOTAR-329 — Revote audit aggregates for public dashboards.
+     * @return totalRevotes Overwrite actions recorded on-chain.
+     * @return uniqueVoters Unique voterHashes with at least one vote.
+     * @return overwriteRatio WAD-scaled overwrite rate (totalRevotes / total VoteCast events).
+     */
+    function getRevoteStats(uint256 electionId)
+        external
+        view
+        returns (uint256 totalRevotes, uint256 uniqueVoters, uint256 overwriteRatio)
+    {
+        (totalRevotes, uniqueVoters, overwriteRatio) = voteRegistry.getRevoteStats(electionId);
+    }
 }
