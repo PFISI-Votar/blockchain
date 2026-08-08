@@ -243,9 +243,6 @@ async function main() {
     SEPOLIA_RPC_URL: alchemyUrl,
     PRIVATE_KEY: privateKey,
     ADMIN_MULTISIG_ADDRESS: address,
-    GRANT_TARGET: address,
-    // Vaciar el placeholder del .env.example: deploy-sepolia-stack.ts interpreta
-    // un valor vacío o ausente como "desplegar un nuevo contrato".
     MERKLE_ROOT_STORE_ADDRESS: "",
   });
   console.log("  ✅ blockchain/.env actualizado.");
@@ -256,10 +253,8 @@ async function main() {
   ensureEnvExists(backEnv);
   writeEnvVars(backEnv, {
     SEPOLIA_RPC_URL: alchemyUrl,
-    MERKLE_UPDATER_PRIVATE_KEY: privateKey,
-    ELECTION_ADMIN_PRIVATE_KEY: privateKey,
-    AUDIT_VIEW_ADDRESS: address,
-    RECIBO_SIGNING_PRIVATE_KEY: privateKey,
+    PRIVATE_KEY: privateKey,
+    ADMIN_MULTISIG_ADDRESS: address,
   });
   console.log("  ✅ back/.env actualizado.");
 
@@ -270,8 +265,8 @@ async function main() {
   writeEnvVars(frontEnv, {
     VITE_RPC_URL: alchemyUrl,
     VITE_CHAIN_ID: "11155111",
-    VITE_VOTE_TRANSMITTER_PRIVATE_KEY: privateKey,
-    VITE_AUDIT_VIEW_ADDRESS: address,
+    VITE_PRIVATE_KEY: privateKey,
+    VITE_ADMIN_MULTISIG_ADDRESS: address,
   });
   console.log("  ✅ front/.env actualizado.");
 
