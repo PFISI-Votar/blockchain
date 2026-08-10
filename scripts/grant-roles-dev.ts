@@ -2,9 +2,9 @@ import { ethers } from "hardhat";
 
 async function main() {
   const merkleRootStoreAddress = process.env.MERKLE_ROOT_STORE_ADDRESS;
-  const target = process.env.GRANT_TARGET;
+  const target = process.env.ADMIN_MULTISIG_ADDRESS;
   if (!merkleRootStoreAddress || !target) {
-    throw new Error("Set MERKLE_ROOT_STORE_ADDRESS and GRANT_TARGET env vars");
+    throw new Error("Set MERKLE_ROOT_STORE_ADDRESS and ADMIN_MULTISIG_ADDRESS env vars");
   }
 
   const store = await ethers.getContractAt("MerkleRootStore", merkleRootStoreAddress);

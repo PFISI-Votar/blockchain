@@ -147,7 +147,6 @@ votar=# SELECT * FROM eleccion;
 | `SEPOLIA_RPC_URL` | URL de Alchemy que pasaste como argumento |
 | `PRIVATE_KEY` | Wallet generada automáticamente |
 | `ADMIN_MULTISIG_ADDRESS` | Wallet generada automáticamente |
-| `GRANT_TARGET` | Wallet generada automáticamente |
 
 ### `back/.env`
 
