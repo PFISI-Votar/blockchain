@@ -245,5 +245,67 @@ describe("MerkleRootStore — US-335 & US-336 UATs", () => {
         ).to.be.revertedWithCustomError(store, "InvalidElectionWindow");
       });
     });
+
+    describe("lockConfig — VOTAR-327", () => {
+      it("emits ConfigurationLocked and sets isConfigLocked=true", async () => {
+        expect(await store.isConfigLocked(ELECTION_ID)).to.equal(false);
+
+        await expect(store.connect(admin).lockConfig(ELECTION_ID))
+          .to.emit(store, "ConfigurationLocked")
+          .withArgs(ELECTION_ID);
+
+        expect(await store.isConfigLocked(ELECTION_ID)).to.equal(true);
+      });
+
+      it("reverts with ConfigLocked on second call", async () => {
+        await store.connect(admin).lockConfig(ELECTION_ID);
+
+        await expect(store.connect(admin).lockConfig(ELECTION_ID))
+          .to.be.revertedWithCustomError(store, "ConfigLocked")
+          .withArgs(ELECTION_ID);
+      });
+
+      it("reverts when non-admin tries to lock config", async () => {
+        const ELECTION_ADMIN_ROLE = await store.ELECTION_ADMIN_ROLE();
+        await expect(store.connect(attacker).lockConfig(ELECTION_ID))
+          .to.be.revertedWithCustomError(
+            store,
+            "AccessControlUnauthorizedAccount",
+          )
+          .withArgs(attacker.address, ELECTION_ADMIN_ROLE);
+      });
+
+      it("setElectionWindow reverts with ConfigLocked once locked, even in DRAFT state", async () => {
+        // Locking is independent of ElectionState — default state here is DRAFT.
+        expect(await store.getElectionState(ELECTION_ID)).to.equal(
+          ElectionState.DRAFT,
+        );
+        await store.connect(admin).lockConfig(ELECTION_ID);
+
+        await expect(
+          store.connect(admin).setElectionWindow(ELECTION_ID, 100n, 200n),
+        )
+          .to.be.revertedWithCustomError(store, "ConfigLocked")
+          .withArgs(ELECTION_ID);
+      });
+
+      it("setElectionState keeps working normally after lockConfig (lifecycle must still advance)", async () => {
+        await store.connect(admin).lockConfig(ELECTION_ID);
+
+        await expect(
+          store.connect(admin).setElectionState(ELECTION_ID, ElectionState.OPEN),
+        ).to.not.be.reverted;
+        expect(await store.getElectionState(ELECTION_ID)).to.equal(
+          ElectionState.OPEN,
+        );
+
+        await expect(
+          store.connect(admin).setElectionState(ELECTION_ID, ElectionState.CLOSED),
+        ).to.not.be.reverted;
+        expect(await store.getElectionState(ELECTION_ID)).to.equal(
+          ElectionState.CLOSED,
+        );
+      });
+    });
   });
 });
