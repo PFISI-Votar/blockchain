@@ -1,7 +1,14 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { loadFixture, time } from "@nomicfoundation/hardhat-toolbox/network-helpers";
-import { BallotContract, MerkleRootStore, VoteRegistry } from "../typechain-types";
+import {
+  loadFixture,
+  time,
+} from "@nomicfoundation/hardhat-toolbox/network-helpers";
+import {
+  BallotContract,
+  MerkleRootStore,
+  VoteRegistry,
+} from "../typechain-types";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import {
   buildPadronMerkleTree,
@@ -32,7 +39,7 @@ function computeSelectionHash(payload: {
     votoEnBlanco: payload.votoEnBlanco === true,
     votoNulo: payload.votoNulo === true,
     selecciones: [...payload.selecciones].sort(
-      (a, b) => a.idCategoria - b.idCategoria || a.idCandidato - b.idCandidato,
+      (a, b) => a.idCategoria - b.idCategoria || a.idCandidato - b.idCandidato
     ),
   };
   return ethers.keccak256(ethers.toUtf8Bytes(JSON.stringify(normalized)));
@@ -65,9 +72,10 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       revoteEnabled?: boolean;
       maxVotesPerVoter?: number;
       minIntervalSeconds?: number;
-    } = {},
+    } = {}
   ) {
-    const [admin, merkleUpdater, ephemeralSigner, voter] = await ethers.getSigners();
+    const [admin, merkleUpdater, ephemeralSigner, voter] =
+      await ethers.getSigners();
 
     const storeFactory = await ethers.getContractFactory("MerkleRootStore");
     const store = await storeFactory.deploy(admin.address);
@@ -77,21 +85,21 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
     // VOTAR-341 — default production policy: revote disabled.
     const registry = await registryFactory.deploy(
       admin.address,
-      options.revoteEnabled ?? false,
+      options.revoteEnabled ?? false
     );
     await registry.waitForDeployment();
 
     const ballotFactory = await ethers.getContractFactory("BallotContract");
     // VOTAR-324 — generous default so pre-existing tests never hit MaxVotesReached.
     // VOTAR-325 — default 0 (no cooldown) so pre-existing back-to-back casts never
-    // hit CooldownActive.
+    // hit RetryTooSoon.
     const ballot = await ballotFactory.deploy(
       admin.address,
       await store.getAddress(),
       await registry.getAddress(),
       options.maxVotesPerVoter ?? 10,
       options.minIntervalSeconds ?? 0,
-      0, // TallyPolicy.LAST_VOTE_WINS
+      0 // TallyPolicy.LAST_VOTE_WINS
     );
     await ballot.waitForDeployment();
 
@@ -104,10 +112,16 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
     // VOTAR-345 — seal the candidate set (all non-reserved ids used across this
     // suite) before any castSignedVote, otherwise recordVote reverts with
     // CandidateSetNotRegistered.
-    await registry.connect(admin).registerCandidates(ELECTION_ID, [101n, 102n, 103n]);
+    await registry
+      .connect(admin)
+      .registerCandidates(ELECTION_ID, [101n, 102n, 103n]);
 
-    await store.connect(admin).grantRole(await store.MERKLE_UPDATER_ROLE(), merkleUpdater.address);
-    await store.connect(admin).grantRole(await store.ELECTION_ADMIN_ROLE(), admin.address);
+    await store
+      .connect(admin)
+      .grantRole(await store.MERKLE_UPDATER_ROLE(), merkleUpdater.address);
+    await store
+      .connect(admin)
+      .grantRole(await store.ELECTION_ADMIN_ROLE(), admin.address);
 
     const hashes = [
       hashVotante("30111222", "ana@frvm.utn.edu.ar"),
@@ -161,7 +175,7 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       selectionHash: string;
       candidateId: bigint;
       timestamp: bigint;
-    }>,
+    }>
   ) {
     const domain = {
       name: "VOTAR",
@@ -218,10 +232,13 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
     // para cuando el enum crezca con nuevas políticas.
 
     it("lastVoteIndex refleja el índice 0-based del último sufragio firmado", async () => {
-      const fixture = await deployFixture({ revoteEnabled: true, maxVotesPerVoter: 3 });
+      const fixture = await deployFixture({
+        revoteEnabled: true,
+        maxVotesPerVoter: 3,
+      });
 
       await expect(
-        fixture.ballot.lastVoteIndex(ELECTION_ID, fixture.nullifier),
+        fixture.ballot.lastVoteIndex(ELECTION_ID, fixture.nullifier)
       ).to.be.revertedWithCustomError(fixture.ballot, "NullifierHasNotVoted");
 
       const cast = async (candidateId: bigint) => {
@@ -238,7 +255,11 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
           candidateId,
           timestamp: TIMESTAMP,
         };
-        const signature = await fixture.voter.signTypedData(domain, VOTE_TYPE, message);
+        const signature = await fixture.voter.signTypedData(
+          domain,
+          VOTE_TYPE,
+          message
+        );
         return fixture.ballot
           .connect(fixture.voter)
           .castSignedVote(
@@ -250,16 +271,20 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             fixture.voter.address,
             signature,
-            candidateId,
+            candidateId
           );
       };
 
       await cast(101n);
-      expect(await fixture.ballot.lastVoteIndex(ELECTION_ID, fixture.nullifier)).to.equal(0n);
+      expect(
+        await fixture.ballot.lastVoteIndex(ELECTION_ID, fixture.nullifier)
+      ).to.equal(0n);
 
       await cast(102n);
       await cast(103n);
-      expect(await fixture.ballot.lastVoteIndex(ELECTION_ID, fixture.nullifier)).to.equal(2n);
+      expect(
+        await fixture.ballot.lastVoteIndex(ELECTION_ID, fixture.nullifier)
+      ).to.equal(2n);
     });
   });
 
@@ -281,13 +306,15 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
-            CANDIDATE_ID,
-          ),
+            CANDIDATE_ID
+          )
       ).to.be.revertedWithCustomError(ballot, "InvalidSignature");
     });
 
     it("reverts InvalidSignature when candidateId is tampered (VOTAR-346)", async () => {
-      const signature = await signVote(ephemeralSigner, { candidateId: CANDIDATE_ID });
+      const signature = await signVote(ephemeralSigner, {
+        candidateId: CANDIDATE_ID,
+      });
 
       await expect(
         ballot
@@ -301,8 +328,8 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
-            999n,
-          ),
+            999n
+          )
       ).to.be.revertedWithCustomError(ballot, "InvalidSignature");
     });
   });
@@ -323,8 +350,8 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
-            CANDIDATE_ID,
-          ),
+            CANDIDATE_ID
+          )
       ).to.emit(ballot, "SignedVoteCast");
 
       await expect(
@@ -339,8 +366,8 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
-            CANDIDATE_ID,
-          ),
+            CANDIDATE_ID
+          )
       ).to.be.revertedWithCustomError(ballot, "RevoteDisabled");
     });
   });
@@ -361,7 +388,7 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
           TIMESTAMP,
           ephemeralSigner.address,
           signature,
-          CANDIDATE_ID,
+          CANDIDATE_ID
         );
 
       await expect(
@@ -376,8 +403,8 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
-            CANDIDATE_ID,
-          ),
+            CANDIDATE_ID
+          )
       ).to.be.revertedWithCustomError(ballot, "RevoteDisabled");
     });
 
@@ -394,7 +421,7 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
           TIMESTAMP,
           ephemeralSigner.address,
           signature,
-          CANDIDATE_ID,
+          CANDIDATE_ID
         );
 
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_ID)).to.equal(1n);
@@ -413,8 +440,8 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
-            CANDIDATE_ID,
-          ),
+            CANDIDATE_ID
+          )
       ).to.be.revertedWithCustomError(ballot, "RevoteDisabled");
 
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_ID)).to.equal(1n);
@@ -427,7 +454,10 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
 
   describe("VOTAR-324: límite de sufragios por votante on-chain", () => {
     it("UAT-03 — rechaza el tercer voto firmado cuando maxVotesPerVoter=2 con re-voto habilitado", async () => {
-      const fixture = await deployFixture({ revoteEnabled: true, maxVotesPerVoter: 2 });
+      const fixture = await deployFixture({
+        revoteEnabled: true,
+        maxVotesPerVoter: 2,
+      });
       const {
         ballot: limitedBallot,
         voter: limitedVoter,
@@ -452,7 +482,11 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
         candidateId: CANDIDATE_ID,
         timestamp: TIMESTAMP,
       };
-      const signature = await limitedSigner.signTypedData(domain, VOTE_TYPE, message);
+      const signature = await limitedSigner.signTypedData(
+        domain,
+        VOTE_TYPE,
+        message
+      );
 
       const cast = () =>
         limitedBallot
@@ -466,7 +500,7 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             limitedSigner.address,
             signature,
-            CANDIDATE_ID,
+            CANDIDATE_ID
           );
 
       await expect(cast()).to.emit(limitedBallot, "SignedVoteCast");
@@ -486,13 +520,16 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
           await registry.getAddress(),
           0,
           0,
-          0, // TallyPolicy.LAST_VOTE_WINS
-        ),
+          0 // TallyPolicy.LAST_VOTE_WINS
+        )
       ).to.be.revertedWithCustomError(ballotFactory, "InvalidMaxVotesPerVoter");
     });
 
     it("still reverts RevoteDisabled (not MaxVotesReached) when maxVotesPerVoter=1 and revote is off", async () => {
-      const fixture = await deployFixture({ revoteEnabled: false, maxVotesPerVoter: 1 });
+      const fixture = await deployFixture({
+        revoteEnabled: false,
+        maxVotesPerVoter: 1,
+      });
       const domain = {
         name: "VOTAR",
         version: "1",
@@ -506,7 +543,11 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
         candidateId: CANDIDATE_ID,
         timestamp: TIMESTAMP,
       };
-      const signature = await fixture.ephemeralSigner.signTypedData(domain, VOTE_TYPE, message);
+      const signature = await fixture.ephemeralSigner.signTypedData(
+        domain,
+        VOTE_TYPE,
+        message
+      );
       const cast = () =>
         fixture.ballot
           .connect(fixture.voter)
@@ -519,18 +560,21 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             fixture.ephemeralSigner.address,
             signature,
-            CANDIDATE_ID,
+            CANDIDATE_ID
           );
 
       await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
-      await expect(cast()).to.be.revertedWithCustomError(fixture.ballot, "RevoteDisabled");
+      await expect(cast()).to.be.revertedWithCustomError(
+        fixture.ballot,
+        "RevoteDisabled"
+      );
     });
   });
 
   describe("VOTAR-325: intervalo mínimo entre re-votos (cooldown anti coerción)", () => {
     async function signForFixture(
       fixture: Awaited<ReturnType<typeof deployFixture>>,
-      signer: HardhatEthersSigner,
+      signer: HardhatEthersSigner
     ) {
       const domain = {
         name: "VOTAR",
@@ -558,12 +602,12 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             signer.address,
             signature,
-            CANDIDATE_ID,
+            CANDIDATE_ID
           );
       return cast;
     }
 
-    it("UAT-01 — rechaza el segundo voto con CooldownActive antes de cumplirse el intervalo", async () => {
+    it("UAT-01 — rechaza el segundo voto con RetryTooSoon antes de cumplirse el intervalo", async () => {
       const fixture = await deployFixture({
         revoteEnabled: true,
         maxVotesPerVoter: 5,
@@ -578,7 +622,7 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       const expectedRemaining = 300 - (nextTimestamp - voteTimestamp);
 
       await expect(cast())
-        .to.be.revertedWithCustomError(fixture.ballot, "CooldownActive")
+        .to.be.revertedWithCustomError(fixture.ballot, "RetryTooSoon")
         .withArgs(ELECTION_ID, expectedRemaining);
     });
 
@@ -595,7 +639,7 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
     });
 
-    it("precedencia: revierte RevoteDisabled (no CooldownActive) cuando el re-voto está apagado", async () => {
+    it("precedencia: revierte RevoteDisabled (no RetryTooSoon) cuando el re-voto está apagado", async () => {
       const fixture = await deployFixture({
         revoteEnabled: false,
         maxVotesPerVoter: 5,
@@ -604,7 +648,10 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       const cast = await signForFixture(fixture, fixture.ephemeralSigner);
 
       await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
-      await expect(cast()).to.be.revertedWithCustomError(fixture.ballot, "RevoteDisabled");
+      await expect(cast()).to.be.revertedWithCustomError(
+        fixture.ballot,
+        "RevoteDisabled"
+      );
     });
 
     it("getVoterState refleja votesUsed, lastVoteAt, cooldownRemaining decreciente y blockTimestamp del nodo", async () => {
@@ -615,7 +662,10 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       });
       const cast = await signForFixture(fixture, fixture.ephemeralSigner);
 
-      const beforeVote = await fixture.ballot.getVoterState(ELECTION_ID, fixture.nullifier);
+      const beforeVote = await fixture.ballot.getVoterState(
+        ELECTION_ID,
+        fixture.nullifier
+      );
       expect(beforeVote.votesUsed).to.equal(0n);
       expect(beforeVote.lastVoteAt).to.equal(0n);
       expect(beforeVote.cooldownRemaining).to.equal(0n);
@@ -623,27 +673,101 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       await cast();
       const voteTimestamp = await time.latest();
 
-      const afterVote = await fixture.ballot.getVoterState(ELECTION_ID, fixture.nullifier);
+      const afterVote = await fixture.ballot.getVoterState(
+        ELECTION_ID,
+        fixture.nullifier
+      );
       expect(afterVote.votesUsed).to.equal(1n);
       expect(afterVote.lastVoteAt).to.equal(BigInt(voteTimestamp));
       expect(afterVote.cooldownRemaining).to.equal(300n);
       expect(afterVote.blockTimestamp).to.equal(BigInt(voteTimestamp));
 
       await time.increase(120);
-      const midCooldown = await fixture.ballot.getVoterState(ELECTION_ID, fixture.nullifier);
+      const midCooldown = await fixture.ballot.getVoterState(
+        ELECTION_ID,
+        fixture.nullifier
+      );
       expect(midCooldown.cooldownRemaining).to.equal(180n);
 
       await time.increase(180);
-      const unlocked = await fixture.ballot.getVoterState(ELECTION_ID, fixture.nullifier);
+      const unlocked = await fixture.ballot.getVoterState(
+        ELECTION_ID,
+        fixture.nullifier
+      );
       expect(unlocked.cooldownRemaining).to.equal(0n);
     });
 
     it("minIntervalSeconds=0 (default) no bloquea votos consecutivos", async () => {
-      const fixture = await deployFixture({ revoteEnabled: true, maxVotesPerVoter: 5 });
+      const fixture = await deployFixture({
+        revoteEnabled: true,
+        maxVotesPerVoter: 5,
+      });
       const cast = await signForFixture(fixture, fixture.ephemeralSigner);
 
       await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
       await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
+    });
+
+    it("VOTAR-449: el cooldown de un nullifier no bloquea a otro nullifier distinto", async () => {
+      const fixture = await deployFixture({
+        revoteEnabled: true,
+        maxVotesPerVoter: 5,
+        minIntervalSeconds: 300,
+      });
+      const castA = await signForFixture(fixture, fixture.ephemeralSigner);
+      await castA();
+
+      const otherNullifier =
+        "0x2222222222222222222222222222222222222222222222222222222222222222";
+      const [, , , , otherSigner] = await ethers.getSigners();
+      const domain = {
+        name: "VOTAR",
+        version: "1",
+        chainId: (await ethers.provider.getNetwork()).chainId,
+        verifyingContract: await fixture.ballot.getAddress(),
+      };
+      const message = {
+        electionId: ELECTION_ID,
+        nullifier: otherNullifier,
+        selectionHash: fixture.selectionHash,
+        candidateId: CANDIDATE_ID,
+        timestamp: TIMESTAMP,
+      };
+      const signature = await otherSigner.signTypedData(
+        domain,
+        VOTE_TYPE,
+        message
+      );
+
+      await expect(
+        fixture.ballot
+          .connect(fixture.voter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            fixture.validProof,
+            otherNullifier,
+            fixture.selectionHash,
+            TIMESTAMP,
+            otherSigner.address,
+            signature,
+            CANDIDATE_ID
+          )
+      ).to.emit(fixture.ballot, "SignedVoteCast");
+
+      const stateA = await fixture.ballot.getVoterState(
+        ELECTION_ID,
+        fixture.nullifier
+      );
+      const stateB = await fixture.ballot.getVoterState(
+        ELECTION_ID,
+        otherNullifier
+      );
+      expect(stateA.cooldownRemaining).to.be.greaterThan(0n);
+      expect(stateB.votesUsed).to.equal(1n);
+      // B acaba de votar: su cooldown arranca independiente del de A.
+      expect(stateB.cooldownRemaining).to.equal(300n);
+      expect(stateB.lastVoteAt).to.not.equal(stateA.lastVoteAt);
     });
   });
 
@@ -663,16 +787,23 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
-            CANDIDATE_ID,
-          ),
+            CANDIDATE_ID
+          )
       )
         .to.emit(ballot, "SignedVoteCast")
-        .withArgs(ELECTION_ID, nullifier, selectionHash, ephemeralSigner.address)
+        .withArgs(
+          ELECTION_ID,
+          nullifier,
+          selectionHash,
+          ephemeralSigner.address
+        )
         .and.to.emit(registry, "VoteCast")
         .withArgs(ELECTION_ID, nullifier, CANDIDATE_ID, false);
 
       expect(await ballot.hasVoted(ELECTION_ID, VOTER_LEAF)).to.equal(true);
-      expect(await ballot.isNullifierUsed(ELECTION_ID, nullifier)).to.equal(true);
+      expect(await ballot.isNullifierUsed(ELECTION_ID, nullifier)).to.equal(
+        true
+      );
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_ID)).to.equal(1n);
     });
 
@@ -691,8 +822,8 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             voter.address,
             signature,
-            CANDIDATE_ID,
-          ),
+            CANDIDATE_ID
+          )
       ).to.be.revertedWithCustomError(ballot, "InvalidSignature");
     });
 
@@ -707,7 +838,9 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       });
       expect(frontAlignedHash).to.equal(selectionHash);
 
-      const signature = await signVote(ephemeralSigner, { selectionHash: frontAlignedHash });
+      const signature = await signVote(ephemeralSigner, {
+        selectionHash: frontAlignedHash,
+      });
 
       await expect(
         ballot
@@ -721,13 +854,16 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
-            CANDIDATE_ID,
-          ),
+            CANDIDATE_ID
+          )
       ).to.emit(ballot, "SignedVoteCast");
     });
 
     it("emits VoteCast with reserved VOTO_BLANCO id for blank ballots", async () => {
-      const blankHash = computeSelectionHash({ votoEnBlanco: true, selecciones: [] });
+      const blankHash = computeSelectionHash({
+        votoEnBlanco: true,
+        selecciones: [],
+      });
       const signature = await signVote(ephemeralSigner, {
         selectionHash: blankHash,
         candidateId: VOTO_BLANCO,
@@ -745,8 +881,8 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
-            VOTO_BLANCO,
-          ),
+            VOTO_BLANCO
+          )
       )
         .to.emit(registry, "VoteCast")
         .withArgs(ELECTION_ID, nullifier, VOTO_BLANCO, false);
@@ -755,7 +891,10 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
     });
 
     it("emits VoteCast with reserved VOTO_NULO id for null ballots", async () => {
-      const nullHash = computeSelectionHash({ votoNulo: true, selecciones: [] });
+      const nullHash = computeSelectionHash({
+        votoNulo: true,
+        selecciones: [],
+      });
       const signature = await signVote(ephemeralSigner, {
         selectionHash: nullHash,
         candidateId: VOTO_NULO,
@@ -773,8 +912,8 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
-            VOTO_NULO,
-          ),
+            VOTO_NULO
+          )
       )
         .to.emit(registry, "VoteCast")
         .withArgs(ELECTION_ID, nullifier, VOTO_NULO, false);
@@ -782,7 +921,9 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
 
     it("VOTAR-345 — reverts InvalidCandidateId for a signed vote with an unregistered candidateId", async () => {
       const unregisteredId = 999n;
-      const signature = await signVote(ephemeralSigner, { candidateId: unregisteredId });
+      const signature = await signVote(ephemeralSigner, {
+        candidateId: unregisteredId,
+      });
 
       await expect(
         ballot
@@ -796,8 +937,8 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
-            unregisteredId,
-          ),
+            unregisteredId
+          )
       )
         .to.be.revertedWithCustomError(registry, "InvalidCandidateId")
         .withArgs(ELECTION_ID, unregisteredId);
@@ -814,7 +955,9 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
         "selectionHash",
         "signer",
       ]);
-      expect(fragment!.inputs.some((input) => input.name === "voterLeaf")).to.equal(false);
+      expect(
+        fragment!.inputs.some((input) => input.name === "voterLeaf")
+      ).to.equal(false);
     });
 
     it("VoteCast topics do not include the submitting wallet address", async () => {
@@ -830,22 +973,30 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
           TIMESTAMP,
           ephemeralSigner.address,
           signature,
-          CANDIDATE_ID,
+          CANDIDATE_ID
         );
       const receipt = await tx.wait();
       expect(receipt).to.not.equal(null);
 
       const voteCastTopic = registry.interface.getEvent("VoteCast")!.topicHash;
-      const voteCastLog = receipt!.logs.find((log) => log.topics[0] === voteCastTopic);
+      const voteCastLog = receipt!.logs.find(
+        (log) => log.topics[0] === voteCastTopic
+      );
       expect(voteCastLog).to.not.equal(undefined);
       expect(voteCastLog!.topics.length).to.equal(3);
 
-      const voterAddressTopic = ethers.zeroPadValue(voter.address, 32).toLowerCase();
-      expect(voteCastLog!.topics.map((t) => t.toLowerCase())).to.not.include(voterAddressTopic);
+      const voterAddressTopic = ethers
+        .zeroPadValue(voter.address, 32)
+        .toLowerCase();
+      expect(voteCastLog!.topics.map((t) => t.toLowerCase())).to.not.include(
+        voterAddressTopic
+      );
     });
 
     it("reverts the whole cast when VoteRegistry.recordVote cannot run (paused)", async () => {
-      await registry.connect(admin).grantRole(await registry.PAUSER_ROLE(), admin.address);
+      await registry
+        .connect(admin)
+        .grantRole(await registry.PAUSER_ROLE(), admin.address);
       await registry.connect(admin).pause();
 
       const signature = await signVote(ephemeralSigner);
@@ -862,12 +1013,14 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
             TIMESTAMP,
             ephemeralSigner.address,
             signature,
-            CANDIDATE_ID,
-          ),
+            CANDIDATE_ID
+          )
       ).to.be.revertedWithCustomError(registry, "EnforcedPause");
 
       expect(await ballot.hasVoted(ELECTION_ID, VOTER_LEAF)).to.equal(false);
-      expect(await ballot.isNullifierUsed(ELECTION_ID, nullifier)).to.equal(false);
+      expect(await ballot.isNullifierUsed(ELECTION_ID, nullifier)).to.equal(
+        false
+      );
     });
   });
 });

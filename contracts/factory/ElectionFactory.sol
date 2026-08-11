@@ -61,10 +61,16 @@ contract ElectionFactory is VotarAccessControl {
         RevoteConfig revoteConfig
     );
 
+    /// @notice Emitted when the RevoteConfig for an election is sealed (audit trail).
+    event ConfigurationLocked(uint256 indexed electionId);
+
     error ElectionAlreadyExists(uint256 electionId);
+    error ElectionDoesNotExist(uint256 electionId);
     error MerkleRootStoreIsZeroAddress();
+    error ConfigLocked(uint256 electionId);
 
     mapping(uint256 electionId => ElectionDeployment deployment) private _deployments;
+    mapping(uint256 electionId => bool locked) private _configLocked;
     uint256[] private _electionIds;
 
     /**
@@ -132,6 +138,28 @@ contract ElectionFactory is VotarAccessControl {
         registry.grantRole(registry.ELECTION_ADMIN_ROLE(), admin);
         registry.grantRole(DEFAULT_ADMIN_ROLE, admin);
         registry.renounceRole(DEFAULT_ADMIN_ROLE, address(this));
+    }
+
+    /**
+     * @notice Seals the audit trail for `electionId`'s RevoteConfig (VOTAR-327).
+     * @dev RevoteConfig has no setter — it is written once in {createElection} and
+     *      the downstream BallotContract copies (`maxVotesPerVoter`, `minIntervalSeconds`,
+     *      `tallyPolicy`) are Solidity `immutable`. This function therefore does not
+     *      guard any write path; it produces an explicit, auditable on-chain event/flag
+     *      proving the policy freeze once the comicio opens, satisfying VOTAR-327.
+     *      Idempotency: a second call reverts with {ConfigLocked} instead of being a
+     *      silent no-op, so double-locking is auditable too.
+     */
+    function lockConfig(uint256 electionId) external onlyRole(DEFAULT_ADMIN_ROLE) whenNotPaused {
+        if (!_deployments[electionId].exists) revert ElectionDoesNotExist(electionId);
+        if (_configLocked[electionId]) revert ConfigLocked(electionId);
+        _configLocked[electionId] = true;
+        emit ConfigurationLocked(electionId);
+    }
+
+    /// @notice Whether {lockConfig} was already called for `electionId`.
+    function isConfigLocked(uint256 electionId) external view returns (bool) {
+        return _configLocked[electionId];
     }
 
     /// @notice Returns deployment metadata for an election, if created.

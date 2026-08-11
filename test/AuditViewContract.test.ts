@@ -184,6 +184,40 @@ describe("AuditViewContract — VOTAR-350 public view UATs", () => {
     });
   });
 
+  describe("VOTAR-329: getRevoteStats", () => {
+    it("returns totalRevotes, uniqueVoters and overwriteRatio (UAT-01)", async () => {
+      const voters = Array.from({ length: 70 }, (_, i) =>
+        ethers.id(`voter-${i}`),
+      );
+      for (const hash of voters) {
+        await registry.connect(ballotRole).recordVote(ELECTION_ID, hash, CANDIDATE_A);
+      }
+      for (let i = 0; i < 30; i++) {
+        await registry
+          .connect(ballotRole)
+          .recordVote(ELECTION_ID, voters[i], VOTO_BLANCO);
+      }
+
+      const [totalRevotes, uniqueVoters, overwriteRatioWad] =
+        await auditView.getRevoteStats(ELECTION_ID);
+
+      expect(totalRevotes).to.equal(30n);
+      expect(uniqueVoters).to.equal(70n);
+      expect(overwriteRatioWad).to.equal((30n * 10n ** 18n) / 100n);
+    });
+
+    it("is callable gas-free from an empty wallet", async () => {
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, CANDIDATE_A);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, VOTO_BLANCO);
+
+      const balanceBefore = await ethers.provider.getBalance(emptyWallet.address);
+      await auditView.connect(emptyWallet).getRevoteStats.staticCall(ELECTION_ID);
+      const balanceAfter = await ethers.provider.getBalance(emptyWallet.address);
+
+      expect(balanceAfter).to.equal(balanceBefore);
+    });
+  });
+
   describe("privacy and participation aggregates", () => {
     it("tracks blank/null and does not expose identity beyond receipt hash", async () => {
       await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, VOTO_BLANCO);
