@@ -110,6 +110,8 @@ contract VoteRegistry is VotarAccessControl {
     mapping(uint256 electionId => mapping(uint256 candidateId => uint256 count)) private _tallies;
     /// @notice Unique voters that have cast at least one vote (overwrite does not increment).
     mapping(uint256 electionId => uint256 totalVotes) private _totalVotes;
+    /// @notice VOTAR-329 — Count of overwrite actions (isOverwrite=true) per election.
+    mapping(uint256 electionId => uint256 totalRevotes) private _totalRevotes;
     /// @notice Anonymous receipt anchors included on-chain (`voterHash` / nullifier).
     mapping(bytes32 receiptHash => bool included) private _receiptIncluded;
     /// @notice VOTAR-345 — Sealed allowlist of votable candidate ids per election.
@@ -147,6 +149,9 @@ contract VoteRegistry is VotarAccessControl {
         if (isOverwrite) {
             if (!revoteEnabled) {
                 revert RevoteDisabled();
+            }
+            unchecked {
+                _totalRevotes[electionId] += 1;
             }
             if (state.candidateId != candidateId) {
                 if (_tallies[electionId][state.candidateId] == 0) {
@@ -231,6 +236,27 @@ contract VoteRegistry is VotarAccessControl {
         returns (uint256 totalVotes, uint256 blankVotes, uint256 nullVotes)
     {
         return (_totalVotes[electionId], _tallies[electionId][VOTO_BLANCO], _tallies[electionId][VOTO_NULO]);
+    }
+
+    /**
+     * @notice VOTAR-329 — Aggregated revote audit metrics for public dashboards.
+     * @return totalRevotes Count of overwrite actions (VoteCast with isOverwrite=true).
+     * @return uniqueVoters Unique voterHashes that have cast at least one vote.
+     * @return overwriteRatio WAD-scaled ratio totalRevotes / (uniqueVoters + totalRevotes); 0 when empty.
+     */
+    function getRevoteStats(uint256 electionId)
+        external
+        view
+        returns (uint256 totalRevotes, uint256 uniqueVoters, uint256 overwriteRatio)
+    {
+        totalRevotes = _totalRevotes[electionId];
+        uniqueVoters = _totalVotes[electionId];
+        uint256 totalEvents = uniqueVoters + totalRevotes;
+        if (totalEvents == 0) {
+            overwriteRatio = 0;
+        } else {
+            overwriteRatio = (totalRevotes * 1e18) / totalEvents;
+        }
     }
 
     /**
