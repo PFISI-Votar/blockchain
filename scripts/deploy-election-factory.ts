@@ -9,7 +9,8 @@ import { exportAbisToConsumers } from "./lib/export-abis";
  * exports address + ABI for NestJS PostgreSQL sync.
  *
  * Required env (Sepolia):
- *   SEPOLIA_RPC_URL, PRIVATE_KEY, ADMIN_MULTISIG_ADDRESS, MERKLE_ROOT_STORE_ADDRESS
+ *   SEPOLIA_RPC_URL, PRIVATE_KEY, ADMIN_MULTISIG_ADDRESS, MERKLE_ROOT_STORE_ADDRESS,
+ *   PAUSER_OPERATOR_ADDRESS
  * Optional:
  *   ETHERSCAN_API_KEY — enables automatic source verification
  *   SKIP_VERIFY=true — skip verification even if API key is set
@@ -54,8 +55,26 @@ async function main() {
     }
   }
 
+  let pauserOperator = process.env.PAUSER_OPERATOR_ADDRESS;
+  if (!pauserOperator) {
+    if (network.name === "hardhat" || network.name === "localhost") {
+      pauserOperator = (await ethers.getSigners())[0].address;
+      console.warn(
+        `[deploy] PAUSER_OPERATOR_ADDRESS not set — using local signer ${pauserOperator}`,
+      );
+    } else {
+      throw new Error(
+        "PAUSER_OPERATOR_ADDRESS is required: PAUSER_ROLE (VOTAR-347) must go to the backend's operational wallet.",
+      );
+    }
+  }
+
+  if (!ethers.isAddress(pauserOperator)) {
+    throw new Error(`PAUSER_OPERATOR_ADDRESS is not a valid address: ${pauserOperator}`);
+  }
+
   const factoryFactory = await ethers.getContractFactory("ElectionFactory");
-  const contract = await factoryFactory.deploy(admin, merkleRootStoreAddress);
+  const contract = await factoryFactory.deploy(admin, merkleRootStoreAddress, pauserOperator);
   await contract.waitForDeployment();
 
   const address = await contract.getAddress();
@@ -66,6 +85,7 @@ async function main() {
   console.log(`[deploy] ElectionFactory deployed at: ${address}`);
   console.log(`[deploy] MerkleRootStore:             ${merkleRootStoreAddress}`);
   console.log(`[deploy] DEFAULT_ADMIN_ROLE:          ${admin}`);
+  console.log(`[deploy] PAUSER_ROLE operator:        ${pauserOperator}`);
   console.log(`[deploy] network:                     ${network.name} (chainId=${chainId})`);
   if (receipt?.hash) {
     console.log(`[deploy] tx:                          ${receipt.hash}`);
@@ -73,7 +93,7 @@ async function main() {
 
   const verified = await verifyContractSource({
     address,
-    constructorArguments: [admin, merkleRootStoreAddress],
+    constructorArguments: [admin, merkleRootStoreAddress, pauserOperator],
     networkName: network.name,
   });
 
@@ -95,6 +115,7 @@ async function main() {
     blockNumber: receipt?.blockNumber ?? null,
     admin,
     merkleRootStore: merkleRootStoreAddress,
+    pauserOperator,
     verified,
     deployedAt: new Date().toISOString(),
   });

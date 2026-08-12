@@ -308,4 +308,44 @@ describe("MerkleRootStore — US-335 & US-336 UATs", () => {
       });
     });
   });
+
+  describe("pause — VOTAR-347", () => {
+    beforeEach(async () => {
+      await store.connect(admin).grantRole(await store.PAUSER_ROLE(), admin.address);
+      await store.connect(admin).pause();
+    });
+
+    it("setElectionState reverts with EnforcedPause while paused", async () => {
+      await expect(
+        store.connect(admin).setElectionState(ELECTION_ID, ElectionState.CONFIGURED),
+      ).to.be.revertedWithCustomError(store, "EnforcedPause");
+    });
+
+    it("setElectionWindow reverts with EnforcedPause while paused", async () => {
+      await expect(
+        store.connect(admin).setElectionWindow(ELECTION_ID, 1_000, 2_000),
+      ).to.be.revertedWithCustomError(store, "EnforcedPause");
+    });
+
+    it("lockConfig reverts with EnforcedPause while paused", async () => {
+      await expect(
+        store.connect(admin).lockConfig(ELECTION_ID),
+      ).to.be.revertedWithCustomError(store, "EnforcedPause");
+    });
+
+    it("publishRoot reverts with EnforcedPause while paused", async () => {
+      await expect(
+        store.connect(merkleUpdater).publishRoot(ELECTION_ID, ROOT),
+      ).to.be.revertedWithCustomError(store, "EnforcedPause");
+    });
+
+    it("getters keep responding while paused (AC4 — observers can still audit)", async () => {
+      await expect(store.getElectionState(ELECTION_ID)).to.not.be.reverted;
+      await expect(store.getMerkleRoot(ELECTION_ID)).to.not.be.reverted;
+      await expect(store.isPublished(ELECTION_ID)).to.not.be.reverted;
+      await expect(store.getElectionWindow(ELECTION_ID)).to.not.be.reverted;
+      await expect(store.getElectionEndTime(ELECTION_ID)).to.not.be.reverted;
+      await expect(store.isConfigLocked(ELECTION_ID)).to.not.be.reverted;
+    });
+  });
 });

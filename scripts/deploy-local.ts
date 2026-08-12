@@ -112,12 +112,17 @@ async function main() {
   await auditView.waitForDeployment();
   const auditViewAddress = await auditView.getAddress();
 
+  // VOTAR-347 — operational wallet granted PAUSER_ROLE on every created election.
+  // Locally this is the same admin signer, matching ELECTION_ADMIN_PRIVATE_KEY below.
+  const pauserOperator = process.env.PAUSER_OPERATOR_ADDRESS ?? admin.address;
+
   // VOTAR-337 — ElectionFactory (master) wired to the shared MerkleRootStore.
   const electionFactoryFactory =
     await ethers.getContractFactory("ElectionFactory");
   const electionFactory = await electionFactoryFactory.deploy(
     admin.address,
     contractAddress,
+    pauserOperator,
   );
   await electionFactory.waitForDeployment();
   const electionFactoryAddress = await electionFactory.getAddress();
@@ -181,6 +186,38 @@ async function main() {
     await grantTx.wait();
   }
 
+  // VOTAR-347 — directly-deployed ballot/registry (outside ElectionFactory)
+  // also need PAUSER_ROLE so the local backend can exercise pause()/unpause().
+  const registryPauserRole = await registry.PAUSER_ROLE();
+  const registryHasPauserRole = await registry.hasRole(
+    registryPauserRole,
+    pauserOperator,
+  );
+  if (!registryHasPauserRole) {
+    console.log(
+      `[deploy-local] Otorgando PAUSER_ROLE (VoteRegistry) a ${pauserOperator}...`,
+    );
+    const grantRegistryPauserTx = await registry
+      .connect(admin)
+      .grantRole(registryPauserRole, pauserOperator);
+    await grantRegistryPauserTx.wait();
+  }
+
+  const ballotPauserRole = await ballot.PAUSER_ROLE();
+  const ballotHasPauserRole = await ballot.hasRole(
+    ballotPauserRole,
+    pauserOperator,
+  );
+  if (!ballotHasPauserRole) {
+    console.log(
+      `[deploy-local] Otorgando PAUSER_ROLE (BallotContract) a ${pauserOperator}...`,
+    );
+    const grantBallotPauserTx = await ballot
+      .connect(admin)
+      .grantRole(ballotPauserRole, pauserOperator);
+    await grantBallotPauserTx.wait();
+  }
+
   const chainId = Number((await ethers.provider.getNetwork()).chainId);
 
   writeEnvFile(
@@ -196,6 +233,7 @@ async function main() {
       ELECTION_FACTORY_ADDRESS: electionFactoryAddress,
       MERKLE_UPDATER_PRIVATE_KEY: HARDHAT_ACCOUNT_1_PRIVATE_KEY,
       ELECTION_ADMIN_PRIVATE_KEY: HARDHAT_ACCOUNT_0_PRIVATE_KEY,
+      PAUSER_OPERATOR_ADDRESS: pauserOperator,
       CHAIN_ID: chainId,
       ETHERSCAN_BASE_URL: "http://localhost",
     },
@@ -231,6 +269,7 @@ async function main() {
   console.log(`[deploy-local] ElectionFactory: ${electionFactoryAddress}`);
   console.log(`[deploy-local] DEFAULT_ADMIN_ROLE: ${admin.address}`);
   console.log(`[deploy-local] MERKLE_UPDATER_ROLE: ${merkleUpdater.address}`);
+  console.log(`[deploy-local] PAUSER_ROLE operator: ${pauserOperator}`);
   console.log(`[deploy-local] chainId: ${chainId}`);
 }
 
