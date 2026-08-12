@@ -24,6 +24,12 @@ import {TallyPolicy} from "../types/TallyPolicy.sol";
  *      VOTAR-341 — `enforceRevotePolicy`: if {VoteRegistry.revoteEnabled} is false and
  *      the nullifier already has a vote entry, reverts with {RevoteDisabled}.
  *
+ *      VOTAR-451 — Leaf anti-double-vote: once `_hasVoted[leaf]` is true, a *new*
+ *      nullifier (e.g. after ephemeral key rotation on tab close) cannot cast again.
+ *      Same-nullifier re-votes remain gated only by {RevoteDisabled}/{MaxVotesReached}/
+ *      {RetryTooSoon}. Without this gate, each fresh nullifier inflated `_totalVotes`
+ *      and public participation could exceed 100%.
+ *
  *      The nullifier value is produced off-chain by VOTAR-353 and included in the
  *      signed Vote struct; this contract only verifies the EIP-712 signature and
  *      enforces uniqueness / revote policy. It does NOT derive nullifier semantics.
@@ -81,6 +87,8 @@ contract BallotContract is VotarAccessControl, EIP712 {
     error VoteRegistryIsZeroAddress();
     /// @notice Thrown when a nullifier already voted and {VoteRegistry.revoteEnabled} is false.
     error RevoteDisabled();
+    /// @notice Thrown when the voter leaf already cast under a different nullifier (VOTAR-451).
+    error AlreadyVoted();
     error InvalidSignature();
     /// @notice Thrown when the election is CLOSED/TALLIED or `block.timestamp` >= endTime.
     error ElectionClosed(uint256 electionId);
@@ -130,6 +138,9 @@ contract BallotContract is VotarAccessControl, EIP712 {
     {
         _assertElectionAcceptingVotes(electionId);
         _assertValidMerkleProof(electionId, voterLeaf, merkleProof);
+        if (_hasVoted[electionId][voterLeaf]) {
+            revert AlreadyVoted();
+        }
 
         _hasVoted[electionId][voterLeaf] = true;
     }
@@ -159,6 +170,10 @@ contract BallotContract is VotarAccessControl, EIP712 {
     ) external whenNotPaused {
         _assertElectionAcceptingVotes(electionId);
         _assertValidMerkleProof(electionId, voterLeaf, merkleProof);
+        // VOTAR-451 — leaf already used by another nullifier ⇒ reject before bumping counters.
+        if (_hasVoted[electionId][voterLeaf] && _votesUsed[electionId][nullifier] == 0) {
+            revert AlreadyVoted();
+        }
         _enforceRevotePolicy(electionId, nullifier);
         _assertValidVoteSignature(
             electionId, nullifier, selectionHash, candidateId, timestamp, expectedSigner, signature
