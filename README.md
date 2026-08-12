@@ -17,6 +17,18 @@ Objetivo: elección funcional extremo a extremo. Alcance cubierto en esta versi�
 
 Además de lo planificado, esta versión incorpora funcionalidades adicionales no previstas originalmente para v1, como auditoría (audit log inmutable) y re-voto (política de último voto cuenta), entre otras.
 
+## Estado del proyecto — v2.0.0
+
+**Versión 2 — Re-voto, cooldown y sellado de política** (agosto de 2026).
+
+Incremento post-MVP (Sprint 4). Alcance cubierto en esta versión:
+
+- **Re-voto:** corrección atómica de contadores al cambiar la selección electoral
+- **Cooldown:** intervalo mínimo entre sufragios por votante (`RetryTooSoon`)
+- **Política electoral:** inmutabilidad de `RevoteConfig` y ventana de votación tras apertura (`lockConfig`)
+- **Auditoría on-chain:** `getRevoteStats` en `AuditViewContract`
+- **Infraestructura:** scripts de deploy Sepolia/Alchemy simplificados y exportación de ABIs
+
 ## RBAC — Control de acceso (AccessControl)
 
 Base de seguridad del sistema: control de acceso basado en roles (RBAC) con principio de mínimo privilegio, construido sobre `@openzeppelin/contracts/access/AccessControl.sol`.
