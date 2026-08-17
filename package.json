@@ -22,7 +22,8 @@
     "uat:335:sepolia": "hardhat run scripts/sepolia-uat-335.ts --network sepolia",
     "uat:339:sepolia": "hardhat run scripts/sepolia-uat-339.ts --network sepolia",
     "uat:350": "hardhat run scripts/uat-audit-views.ts",
-    "audit:votecast": "hardhat run scripts/audit-votecast.ts"
+    "audit:votecast": "hardhat run scripts/audit-votecast.ts",
+    "grant:pauser-role": "hardhat run scripts/grant-pauser-role.ts"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",

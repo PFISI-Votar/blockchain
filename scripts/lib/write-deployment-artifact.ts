@@ -29,6 +29,8 @@ export type ElectionFactoryDeploymentArtifact = {
   blockNumber: number | null;
   admin: string;
   merkleRootStore: string;
+  /** VOTAR-347 — operational address granted PAUSER_ROLE on every created election. */
+  pauserOperator: string;
   verified: boolean;
   deployedAt: string;
 };
@@ -82,10 +84,15 @@ export const writeElectionFactoryArtifact = (
 ): string => {
   const payload = {
     ...artifact,
-    constructorArguments: [artifact.admin, artifact.merkleRootStore],
+    constructorArguments: [
+      artifact.admin,
+      artifact.merkleRootStore,
+      artifact.pauserOperator,
+    ],
     meta: {
       admin: artifact.admin,
       merkleRootStore: artifact.merkleRootStore,
+      pauserOperator: artifact.pauserOperator,
     },
   };
   const outPath = deploymentsRoot(artifact.network, "ElectionFactory.json");

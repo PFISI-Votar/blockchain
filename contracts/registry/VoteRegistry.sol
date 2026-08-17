@@ -186,6 +186,7 @@ contract VoteRegistry is VotarAccessControl {
     function registerCandidates(uint256 electionId, uint256[] calldata ids)
         external
         onlyRole(ELECTION_ADMIN_ROLE)
+        whenNotPaused
     {
         if (_candidateSetSealed[electionId]) revert CandidateSetSealed(electionId);
         if (ids.length == 0) revert EmptyCandidateSet();

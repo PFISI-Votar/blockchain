@@ -24,7 +24,7 @@ import {
  * - artifact catalog + ABI export to NestJS / Vite
  *
  * Required env (Sepolia):
- *   SEPOLIA_RPC_URL, PRIVATE_KEY, ADMIN_MULTISIG_ADDRESS
+ *   SEPOLIA_RPC_URL, PRIVATE_KEY, ADMIN_MULTISIG_ADDRESS, PAUSER_OPERATOR_ADDRESS
  * Optional:
  *   MERKLE_ROOT_STORE_ADDRESS — reuse existing store (US-335)
  *   ETHERSCAN_API_KEY, SKIP_VERIFY
@@ -59,6 +59,28 @@ const requireAdmin = async (): Promise<string> => {
     throw new Error(`ADMIN_MULTISIG_ADDRESS is not a valid address: ${admin}`);
   }
   return admin;
+};
+
+const requirePauserOperator = async (): Promise<string> => {
+  let pauserOperator = process.env.PAUSER_OPERATOR_ADDRESS;
+  if (!pauserOperator) {
+    if (network.name === "hardhat" || network.name === "localhost") {
+      pauserOperator = (await ethers.getSigners())[0].address;
+      console.warn(
+        `[deploy-sepolia] PAUSER_OPERATOR_ADDRESS not set — using local signer ${pauserOperator}`,
+      );
+    } else {
+      throw new Error(
+        "PAUSER_OPERATOR_ADDRESS is required: PAUSER_ROLE (VOTAR-347) must go to the backend's operational wallet.",
+      );
+    }
+  }
+  if (!ethers.isAddress(pauserOperator)) {
+    throw new Error(
+      `PAUSER_OPERATOR_ADDRESS is not a valid address: ${pauserOperator}`,
+    );
+  }
+  return pauserOperator;
 };
 
 type DeployedContract = {
@@ -128,7 +150,12 @@ const persistArtifact = async (
   chainId: number,
   meta?: Record<string, unknown>,
 ): Promise<string> => {
-  if (deployed.name === "ElectionFactory" && meta?.admin && meta?.merkleRootStore) {
+  if (
+    deployed.name === "ElectionFactory" &&
+    meta?.admin &&
+    meta?.merkleRootStore &&
+    meta?.pauserOperator
+  ) {
     return writeElectionFactoryArtifact({
       contractName: "ElectionFactory",
       network: network.name,
@@ -140,6 +167,7 @@ const persistArtifact = async (
       blockNumber: deployed.blockNumber,
       admin: String(meta.admin),
       merkleRootStore: String(meta.merkleRootStore),
+      pauserOperator: String(meta.pauserOperator),
       verified: deployed.verified,
       deployedAt: new Date().toISOString(),
     });
@@ -170,11 +198,13 @@ async function main() {
 
   const [deployer] = await ethers.getSigners();
   const admin = await requireAdmin();
+  const pauserOperator = await requirePauserOperator();
   const chainId = Number((await ethers.provider.getNetwork()).chainId);
 
   console.log(`[deploy-sepolia] network=${network.name} chainId=${chainId}`);
   console.log(`[deploy-sepolia] deployer=${deployer.address}`);
   console.log(`[deploy-sepolia] admin=${admin}`);
+  console.log(`[deploy-sepolia] pauserOperator=${pauserOperator}`);
   console.log(
     `[deploy-sepolia] compiler=${COMPILER.version} optimizer=${COMPILER.optimizer.enabled}/${COMPILER.optimizer.runs} evm=${COMPILER.evmVersion}`,
   );
@@ -230,7 +260,7 @@ async function main() {
     await deployWithResilience(
       "ElectionFactory",
       factoryFactory,
-      [admin, merkleRootStoreAddress],
+      [admin, merkleRootStoreAddress, pauserOperator],
       deployer,
     );
   const factoryAddress = await factory.getAddress();
@@ -244,7 +274,7 @@ async function main() {
     abiHash: hashAbi(factoryAbi),
     txHash: receiptHash,
     blockNumber,
-    constructorArguments: [admin, merkleRootStoreAddress],
+    constructorArguments: [admin, merkleRootStoreAddress, pauserOperator],
     verified: false,
   };
   factoryEntry.verified = await verifyContractSource({
@@ -259,7 +289,7 @@ async function main() {
   for (const entry of deployed) {
     const meta =
       entry.name === "ElectionFactory"
-        ? { admin, merkleRootStore: merkleRootStoreAddress }
+        ? { admin, merkleRootStore: merkleRootStoreAddress, pauserOperator }
         : { admin };
     const artifactPath = await persistArtifact(entry, chainId, meta);
     const catalogPath = upsertDeploymentCatalog({

@@ -80,6 +80,69 @@ describe("VotarAccessControl (RBAC) — UATs", () => {
       await expect(contract.connect(pauser).pause()).to.not.be.reverted;
       expect(await contract.paused()).to.equal(true);
     });
+
+    it("pause(): emits Paused(address,string) with an empty reason", async () => {
+      // Overloaded event name — must reference the qualified signature (see
+      // VotarAccessControl.sol NatSpec), or Chai/ethers report it as ambiguous.
+      await expect(contract.connect(pauser).pause())
+        .to.emit(contract, "Paused(address,string)")
+        .withArgs(pauser.address, "");
+    });
+
+    it("pause(reason): PAUSER_ROLE account pauses with an audit reason and emits Paused(address,string)", async () => {
+      const reason = "Actividad sospechosa detectada";
+      await expect(contract.connect(pauser)["pause(string)"](reason))
+        .to.emit(contract, "Paused(address,string)")
+        .withArgs(pauser.address, reason);
+      expect(await contract.paused()).to.equal(true);
+    });
+
+    it("pause(reason): reverts for an account without PAUSER_ROLE", async () => {
+      await expect(contract.connect(merkleUpdater)["pause(string)"]("x"))
+        .to.be.revertedWithCustomError(contract, "AccessControlUnauthorizedAccount")
+        .withArgs(merkleUpdater.address, PAUSER_ROLE);
+    });
+  });
+
+  describe("unpause — VOTAR-347 follow-up (reanudación tras incidente)", () => {
+    it("UAT-01: PAUSER_ROLE reanuda un contrato pausado y emite Unpaused(address)", async () => {
+      await contract.connect(pauser).pause();
+      expect(await contract.paused()).to.equal(true);
+
+      await expect(contract.connect(pauser).unpause())
+        .to.emit(contract, "Unpaused")
+        .withArgs(pauser.address);
+      expect(await contract.paused()).to.equal(false);
+    });
+
+    it("UAT-01: tras reanudar, las operaciones bloqueadas vuelven a aceptarse", async () => {
+      await contract.connect(pauser).pause();
+      await expect(
+        contract.connect(ballot).recordBallotOp(11),
+      ).to.be.revertedWithCustomError(contract, "EnforcedPause");
+
+      await contract.connect(pauser).unpause();
+
+      await expect(contract.connect(ballot).recordBallotOp(11)).to.not.be.reverted;
+      expect(await contract.lastBallotValue()).to.equal(11n);
+    });
+
+    it("UAT-02: reverts cuando una cuenta sin PAUSER_ROLE invoca unpause()", async () => {
+      await contract.connect(pauser).pause();
+
+      await expect(contract.connect(merkleUpdater).unpause())
+        .to.be.revertedWithCustomError(contract, "AccessControlUnauthorizedAccount")
+        .withArgs(merkleUpdater.address, PAUSER_ROLE);
+      expect(await contract.paused()).to.equal(true);
+    });
+
+    it("UAT-03: reanudación redundante — revierte con ExpectedPause y no emite Unpaused", async () => {
+      expect(await contract.paused()).to.equal(false);
+
+      await expect(
+        contract.connect(pauser).unpause(),
+      ).to.be.revertedWithCustomError(contract, "ExpectedPause");
+    });
   });
 
   describe("UAT-02 — admin-only role management", () => {
