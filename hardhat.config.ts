@@ -1,10 +1,11 @@
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
 import * as dotenv from "dotenv";
+import { resolveSepoliaRpcUrls } from "./scripts/lib/rpc-failover";
 
 dotenv.config();
 
-const SEPOLIA_RPC_URL = process.env.SEPOLIA_RPC_URL ?? "";
+const SEPOLIA_RPC_URL = resolveSepoliaRpcUrls()[0] ?? "";
 const PRIVATE_KEY = process.env.PRIVATE_KEY ?? "";
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY ?? "";
 
@@ -38,6 +39,7 @@ const config: HardhatUserConfig = {
             url: SEPOLIA_RPC_URL,
             accounts: [PRIVATE_KEY],
             // Tolerate Infura/Alchemy micro-outages during deploy (VOTAR-385).
+            // Multi-provider failover for application traffic lives in back/front (VOTAR-386).
             timeout: 180_000,
             // Multiplies gas *limit* estimates; fee bumps are handled in scripts/lib/gas.ts.
             gasMultiplier: 1.15,

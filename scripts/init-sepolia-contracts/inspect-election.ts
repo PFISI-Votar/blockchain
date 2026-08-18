@@ -17,6 +17,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
 import { ethers } from "ethers";
+import { resolveSepoliaRpcUrls, withRpcFailover } from "../lib/rpc-failover";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -28,7 +29,10 @@ function readEnvVar(filePath: string, key: string): string | null {
 }
 
 function prompt(question: string): Promise<string> {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
   return new Promise((resolve) => {
     rl.question(question, (answer) => {
       rl.close();
@@ -54,8 +58,12 @@ async function main() {
   const blockchainRoot = path.resolve(__dirname, "..", "..");
   const blockchainEnv = path.join(blockchainRoot, ".env");
 
-  const rpcUrl = readEnvVar(blockchainEnv, "SEPOLIA_RPC_URL");
-  if (!rpcUrl) {
+  const rpcUrls = resolveSepoliaRpcUrls({
+    SEPOLIA_RPC_URL: readEnvVar(blockchainEnv, "SEPOLIA_RPC_URL") ?? undefined,
+    SEPOLIA_RPC_FALLBACK_URLS:
+      readEnvVar(blockchainEnv, "SEPOLIA_RPC_FALLBACK_URLS") ?? undefined,
+  });
+  if (rpcUrls.length === 0) {
     console.error("❌ No se encontró SEPOLIA_RPC_URL en blockchain/.env");
     console.error("   ¿Ya ejecutaste setup-sepolia.ts?");
     process.exit(1);
@@ -67,17 +75,25 @@ async function main() {
   let factoryAddressFromEnv = readEnvVar(backEnv, "ELECTION_FACTORY_ADDRESS");
 
   // Instrucciones previas
-  console.log("  Prerequisito: debés tener al menos un comicio creado y oficializado");
+  console.log(
+    "  Prerequisito: debés tener al menos un comicio creado y oficializado"
+  );
   console.log("  en la app antes de continuar.\n");
 
   // Pedir ELECTION_FACTORY_ADDRESS (mostrando el del .env como sugerencia)
   let factoryAddress: string;
   if (factoryAddressFromEnv) {
-    console.log(`  Se detectó ELECTION_FACTORY_ADDRESS en back/.env: ${factoryAddressFromEnv}`);
-    const useEnv = await prompt("  ¿Usarlo? (Enter para confirmar, o escribí otra dirección): ");
+    console.log(
+      `  Se detectó ELECTION_FACTORY_ADDRESS en back/.env: ${factoryAddressFromEnv}`
+    );
+    const useEnv = await prompt(
+      "  ¿Usarlo? (Enter para confirmar, o escribí otra dirección): "
+    );
     factoryAddress = useEnv === "" ? factoryAddressFromEnv : useEnv;
   } else {
-    factoryAddress = await prompt("  Ingresá el ELECTION_FACTORY_ADDRESS del back/.env: ");
+    factoryAddress = await prompt(
+      "  Ingresá el ELECTION_FACTORY_ADDRESS del back/.env: "
+    );
   }
 
   if (!ethers.isAddress(factoryAddress)) {
@@ -92,11 +108,16 @@ async function main() {
   if (electionIdArg) {
     electionId = parseInt(electionIdArg, 10);
     if (isNaN(electionId) || electionId < 0) {
-      console.error("❌ El Election ID debe ser un número entero positivo. Recibido:", electionIdArg);
+      console.error(
+        "❌ El Election ID debe ser un número entero positivo. Recibido:",
+        electionIdArg
+      );
       process.exit(1);
     }
   } else {
-    const idInput = await prompt("\n  Ingresá el ID del comicio a inspeccionar: ");
+    const idInput = await prompt(
+      "\n  Ingresá el ID del comicio a inspeccionar: "
+    );
     electionId = parseInt(idInput, 10);
     if (isNaN(electionId) || electionId < 0) {
       console.error("❌ ID inválido:", idInput);
@@ -108,19 +129,26 @@ async function main() {
   console.log(`\n  Consultando ElectionFactory en ${factoryAddress}...`);
   console.log(`  Comicio ID: ${electionId}\n`);
 
-  const provider = new ethers.JsonRpcProvider(rpcUrl);
-  const factory = new ethers.Contract(factoryAddress, ELECTION_FACTORY_ABI, provider);
-
   let result: any;
   try {
-    result = await factory.getElection(electionId);
+    result = await withRpcFailover(rpcUrls, async (rpcUrl) => {
+      const provider = new ethers.JsonRpcProvider(rpcUrl);
+      const factory = new ethers.Contract(
+        factoryAddress,
+        ELECTION_FACTORY_ABI,
+        provider
+      );
+      return factory.getElection(electionId);
+    });
   } catch (err: any) {
     console.error("❌ Error al consultar el contrato:");
     console.error("  ", err.message ?? err);
     console.error("\n  Verificá que:");
     console.error("   - El comicio con ese ID exista y esté oficializado.");
     console.error("   - La dirección de ElectionFactory sea correcta.");
-    console.error("   - Tu app de Alchemy esté activa y con fondos en la wallet.");
+    console.error(
+      "   - Tu app de Alchemy esté activa y con fondos en la wallet."
+    );
     process.exit(1);
   }
 
@@ -129,15 +157,25 @@ async function main() {
   const voteRegistry = result[1] ?? result.voteRegistry;
   const auditView = result[2] ?? result.auditView;
 
-  console.log("╔═════════════════════════════════════════════════════════════╗");
+  console.log(
+    "╔═════════════════════════════════════════════════════════════╗"
+  );
   console.log(`║         Comicio ID: ${String(electionId).padEnd(40)}║`);
-  console.log("╠═════════════════════════════════════════════════════════════╣");
-  console.log("║                                                             ║");
+  console.log(
+    "╠═════════════════════════════════════════════════════════════╣"
+  );
+  console.log(
+    "║                                                             ║"
+  );
   console.log(`║  Ballot:        ${ballot}  ║`);
   console.log(`║  VoteRegistry:  ${voteRegistry}  ║`);
   console.log(`║  AuditView:     ${auditView}  ║`);
-  console.log("║                                                             ║");
-  console.log("╚═════════════════════════════════════════════════════════════╝\n");
+  console.log(
+    "║                                                             ║"
+  );
+  console.log(
+    "╚═════════════════════════════════════════════════════════════╝\n"
+  );
 
   // Links a Etherscan
   const base = "https://sepolia.etherscan.io/address";
