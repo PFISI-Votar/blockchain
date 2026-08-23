@@ -284,6 +284,16 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
       expect(await registry.getVotesByCandidate(ELECTION_ID, CANDIDATE_A)).to.equal(1n);
       expect(await registry.verifyReceipt(VOTER_HASH)).to.equal(true);
     });
+
+    it("VOTAR-347 — registerCandidates reverts with EnforcedPause while paused", async () => {
+      const unsealedElectionId = ELECTION_ID + 100n;
+      await registry.connect(admin).grantRole(await registry.PAUSER_ROLE(), admin.address);
+      await registry.connect(admin).pause();
+
+      await expect(
+        registry.connect(admin).registerCandidates(unsealedElectionId, [CANDIDATE_A]),
+      ).to.be.revertedWithCustomError(registry, "EnforcedPause");
+    });
   });
 
   describe("VOTAR-350 participation and receipt views", () => {

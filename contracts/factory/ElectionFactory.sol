@@ -52,6 +52,13 @@ contract ElectionFactory is VotarAccessControl {
     /// @notice Shared Merkle root store used by every BallotContract instance.
     MerkleRootStore public immutable merkleRootStore;
 
+    /// @notice VOTAR-347 — operational address granted PAUSER_ROLE on every child
+    ///         BallotContract/VoteRegistry deployed by {createElection}. Distinct from
+    ///         `admin` (the Multisig/Governor holding DEFAULT_ADMIN_ROLE): this is the
+    ///         backend's operational wallet, which the Autoridad Electoral triggers
+    ///         (via an application-level n-of-m confirmation flow) to call pause/unpause.
+    address public immutable pauserOperator;
+
     /// @notice Emitted when a full election stack is deployed.
     event ElectionCreated(
         uint256 indexed electionId,
@@ -67,6 +74,7 @@ contract ElectionFactory is VotarAccessControl {
     error ElectionAlreadyExists(uint256 electionId);
     error ElectionDoesNotExist(uint256 electionId);
     error MerkleRootStoreIsZeroAddress();
+    error PauserOperatorIsZeroAddress();
     error ConfigLocked(uint256 electionId);
 
     mapping(uint256 electionId => ElectionDeployment deployment) private _deployments;
@@ -76,13 +84,19 @@ contract ElectionFactory is VotarAccessControl {
     /**
      * @param admin_ Multisig/Governor — DEFAULT_ADMIN_ROLE on this factory and children.
      * @param merkleRootStoreAddress Shared {MerkleRootStore} used by new ballots.
+     * @param pauserOperator_ VOTAR-347 — operational address granted PAUSER_ROLE on
+     *        every child contract deployed by {createElection}.
      */
-    constructor(address admin_, address merkleRootStoreAddress) VotarAccessControl(admin_) {
+    constructor(address admin_, address merkleRootStoreAddress, address pauserOperator_)
+        VotarAccessControl(admin_)
+    {
         // Explicit zero-check (also enforced by {VotarAccessControl}) for Slither.
         if (admin_ == address(0)) revert AdminIsZeroAddress();
         if (merkleRootStoreAddress == address(0)) revert MerkleRootStoreIsZeroAddress();
+        if (pauserOperator_ == address(0)) revert PauserOperatorIsZeroAddress();
         admin = admin_;
         merkleRootStore = MerkleRootStore(merkleRootStoreAddress);
+        pauserOperator = pauserOperator_;
     }
 
     /**
@@ -104,12 +118,15 @@ contract ElectionFactory is VotarAccessControl {
     {
         if (_deployments[electionId].exists) revert ElectionAlreadyExists(electionId);
 
-        // Factory is temporary admin of VoteRegistry so it can grant BALLOT_ROLE
-        // atomically, then transfers DEFAULT_ADMIN_ROLE to the Multisig.
+        // Factory is temporary admin of VoteRegistry AND BallotContract so it can grant
+        // BALLOT_ROLE/PAUSER_ROLE atomically, then transfers DEFAULT_ADMIN_ROLE to the
+        // Multisig (VOTAR-347 — BallotContract now follows the same CEI pattern as
+        // VoteRegistry instead of receiving `admin` directly, so PAUSER_ROLE can be
+        // granted to `pauserOperator` before control is handed off).
         // VOTAR-341 — wire RevoteConfig.enabled into VoteRegistry.revoteEnabled.
         VoteRegistry registry = new VoteRegistry(address(this), revoteConfig.enabled);
         BallotContract ballotContract = new BallotContract(
-            admin,
+            address(this),
             address(merkleRootStore),
             address(registry),
             revoteConfig.maxVotesPerVoter,
@@ -136,8 +153,13 @@ contract ElectionFactory is VotarAccessControl {
 
         registry.grantRole(registry.BALLOT_ROLE(), address(ballotContract));
         registry.grantRole(registry.ELECTION_ADMIN_ROLE(), admin);
+        registry.grantRole(registry.PAUSER_ROLE(), pauserOperator);
         registry.grantRole(DEFAULT_ADMIN_ROLE, admin);
         registry.renounceRole(DEFAULT_ADMIN_ROLE, address(this));
+
+        ballotContract.grantRole(ballotContract.PAUSER_ROLE(), pauserOperator);
+        ballotContract.grantRole(DEFAULT_ADMIN_ROLE, admin);
+        ballotContract.renounceRole(DEFAULT_ADMIN_ROLE, address(this));
     }
 
     /**

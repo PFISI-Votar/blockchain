@@ -36,6 +36,18 @@ abstract contract VotarAccessControl is AccessControl, Pausable {
     error AdminIsZeroAddress();
 
     /**
+     * @notice VOTAR-347 — emitted (in addition to OZ's own {Pausable-Paused}) with the
+     *         audit reason recorded by the Autoridad Electoral triggering the pause.
+     * @dev Overloads OZ Pausable's `event Paused(address)`. Solidity resolves the
+     *      `emit Paused(_msgSender())` inside OZ's own `_pause()` unambiguously to the
+     *      1-arg version (declared in Pausable.sol's own lexical scope); this 2-arg
+     *      version is only ever emitted explicitly by {_pauseWithReason}. Tests/tools
+     *      MUST reference the fully-qualified signature `"Paused(address,string)"`
+     *      (not the bare name `"Paused"`, now ambiguous between two overloads).
+     */
+    event Paused(address indexed account, string reason);
+
+    /**
      * @param admin Multisig/Governor address that receives DEFAULT_ADMIN_ROLE.
      *              It becomes the sole authority able to grant/revoke roles.
      */
@@ -44,13 +56,28 @@ abstract contract VotarAccessControl is AccessControl, Pausable {
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
     }
 
-    /// @notice Pause all `whenNotPaused` operations. Restricted to PAUSER_ROLE.
+    /// @notice Pause all `whenNotPaused` operations, with no recorded reason.
+    /// @dev Equivalent to `pause("")`. Solidity has no default/optional parameters —
+    ///      this overload is the idiomatic way to satisfy VOTAR-347 AC3's "parámetro
+    ///      opcional" without breaking existing zero-arg callers.
     function pause() external onlyRole(PAUSER_ROLE) {
-        _pause();
+        _pauseWithReason("");
+    }
+
+    /// @notice VOTAR-347 (AC3) — Pause with an audit-trail reason.
+    /// @param reason Human-readable justification for the emergency stop, emitted via
+    ///        {Paused} (2-arg) for later off-chain audit / Frontend banners.
+    function pause(string calldata reason) external onlyRole(PAUSER_ROLE) {
+        _pauseWithReason(reason);
     }
 
     /// @notice Resume operations. Restricted to PAUSER_ROLE.
     function unpause() external onlyRole(PAUSER_ROLE) {
         _unpause();
+    }
+
+    function _pauseWithReason(string memory reason) private {
+        _pause();
+        emit Paused(_msgSender(), reason);
     }
 }
