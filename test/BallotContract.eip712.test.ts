@@ -639,6 +639,28 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
     });
 
+    it("VOTAR-452 — acepta el tercer voto tras dos intervalos (maxRevotos=3)", async () => {
+      const fixture = await deployFixture({
+        revoteEnabled: true,
+        maxVotesPerVoter: 3,
+        minIntervalSeconds: 20,
+      });
+      const cast = await signForFixture(fixture, fixture.ephemeralSigner);
+
+      await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
+      await time.increase(20);
+      await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
+      await time.increase(20);
+      await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
+
+      const state = await fixture.ballot.getVoterState(
+        ELECTION_ID,
+        fixture.nullifier,
+      );
+      expect(state.votesUsed).to.equal(3n);
+      expect(state.cooldownRemaining).to.equal(20n);
+    });
+
     it("precedencia: revierte RevoteDisabled (no RetryTooSoon) cuando el re-voto está apagado", async () => {
       const fixture = await deployFixture({
         revoteEnabled: false,
