@@ -17,7 +17,11 @@ import * as fs from "fs";
 import * as path from "path";
 import * as readline from "readline";
 import { ethers } from "ethers";
-import { resolveSepoliaRpcUrls, withRpcFailover } from "../lib/rpc-failover";
+import {
+  readEthBlockNumber,
+  resolveSepoliaRpcUrls,
+  withRpcFailover,
+} from "../lib/rpc-failover";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -131,15 +135,20 @@ async function main() {
 
   let result: any;
   try {
-    result = await withRpcFailover(rpcUrls, async (rpcUrl) => {
-      const provider = new ethers.JsonRpcProvider(rpcUrl);
-      const factory = new ethers.Contract(
-        factoryAddress,
-        ELECTION_FACTORY_ABI,
-        provider
-      );
-      return factory.getElection(electionId);
-    });
+    result = await withRpcFailover(
+      rpcUrls,
+      async (rpcUrl) => {
+        const provider = new ethers.JsonRpcProvider(rpcUrl);
+        const factory = new ethers.Contract(
+          factoryAddress,
+          ELECTION_FACTORY_ABI,
+          provider
+        );
+        return factory.getElection(electionId);
+      },
+      console.warn,
+      { readBlockNumber: readEthBlockNumber }
+    );
   } catch (err: any) {
     console.error("❌ Error al consultar el contrato:");
     console.error("  ", err.message ?? err);

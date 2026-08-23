@@ -66,6 +66,38 @@ describe("VOTAR-386 — RPC failover helpers", () => {
     expect(logs[0]).to.not.include("secretkey12");
   });
 
+  it("skips a lagging backup when block skew exceeds the threshold", async () => {
+    const logs: string[] = [];
+    const readBlockNumber = async (url: string): Promise<number> => {
+      if (url.includes("primary")) {
+        return 100;
+      }
+      if (url.includes("lagging")) {
+        return 80;
+      }
+      return 100;
+    };
+
+    const value = await withRpcFailover(
+      [
+        "https://primary.example/rpc",
+        "https://lagging.example/rpc",
+        "https://healthy.example/rpc",
+      ],
+      async (url) => {
+        if (url.includes("primary")) {
+          throw new Error("429 Too Many Requests");
+        }
+        return url;
+      },
+      (message) => logs.push(message),
+      { readBlockNumber, maxBlockSkew: 5 }
+    );
+
+    expect(value).to.include("healthy");
+    expect(logs.some((line) => line.includes("skew=20"))).to.equal(true);
+  });
+
   it("reads fallbacks from env", () => {
     expect(
       resolveSepoliaRpcUrls({
