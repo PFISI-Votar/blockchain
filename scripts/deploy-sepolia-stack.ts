@@ -62,7 +62,15 @@ const requireAdmin = async (): Promise<string> => {
 };
 
 const requirePauserOperator = async (): Promise<string> => {
-  let pauserOperator = process.env.PAUSER_OPERATOR_ADDRESS;
+  let pauserOperator = process.env.PAUSER_OPERATOR_ADDRESS?.trim();
+  // Placeholders from .env.example (e.g. "pauser_operator_address") must not pass as "set".
+  if (pauserOperator && !ethers.isAddress(pauserOperator)) {
+    throw new Error(
+      `PAUSER_OPERATOR_ADDRESS is not a valid address: ${pauserOperator}. ` +
+        `Run scripts/init-sepolia-contracts/setup-sepolia.ts (it writes the operational wallet) ` +
+        `or set a real 0x… address (same wallet as the backend PRIVATE_KEY).`,
+    );
+  }
   if (!pauserOperator) {
     if (network.name === "hardhat" || network.name === "localhost") {
       pauserOperator = (await ethers.getSigners())[0].address;
@@ -74,11 +82,6 @@ const requirePauserOperator = async (): Promise<string> => {
         "PAUSER_OPERATOR_ADDRESS is required: PAUSER_ROLE (VOTAR-347) must go to the backend's operational wallet.",
       );
     }
-  }
-  if (!ethers.isAddress(pauserOperator)) {
-    throw new Error(
-      `PAUSER_OPERATOR_ADDRESS is not a valid address: ${pauserOperator}`,
-    );
   }
   return pauserOperator;
 };
