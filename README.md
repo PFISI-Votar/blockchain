@@ -105,7 +105,7 @@ Cuentas Hardhat por defecto en local:
 
 ### Deploy a Sepolia
 
-1. Copiar `.env.example` a `.env` y completar `SEPOLIA_RPC_URL`, `PRIVATE_KEY`, `ADMIN_MULTISIG_ADDRESS` y (para UAT on-chain) `ADMIN_PRIVATE_KEY`.
+1. Copiar `.env.example` a `.env` y completar `SEPOLIA_RPC_URL` (y opcionalmente `SEPOLIA_RPC_FALLBACK_URLS` para failover VOTAR-386), `PRIVATE_KEY`, `ADMIN_MULTISIG_ADDRESS` y (para UAT on-chain) `ADMIN_PRIVATE_KEY`.
 2. Ejecutar:
 
 ```bash

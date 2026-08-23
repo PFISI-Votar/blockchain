@@ -11,8 +11,9 @@
  *
  * Qué hace:
  *   1. Valida la URL de Alchemy (debe contener "eth-sepolia").
+ *   1b. (Opcional) Pregunta por un nodo RPC de respaldo (VOTAR-386). Enter = omitir.
  *   2. Genera una wallet aleatoria (address + privateKey).
- *   3. Escribe las variables en blockchain/.env.
+ *   3. Escribe las variables en blockchain/.env (incluye PAUSER_OPERATOR_ADDRESS).
  *   4. Si back/.env no existe, lo copia desde back/.env.example. Luego escribe las variables.
  *   5. Si front/.env no existe, lo copia desde front/.env.example. Luego escribe las variables.
  *   6. Ejecuta deploy-sepolia-stack.ts --network sepolia y parsea las addresses resultantes.
@@ -189,6 +190,37 @@ function waitForEnter(message: string): Promise<void> {
   });
 }
 
+/** Pregunta interactiva. En modo no-interactivo (pipes) usa defaultValue. */
+function askQuestion(prompt: string, defaultValue = ""): Promise<string> {
+  return new Promise((resolve) => {
+    if (!process.stdin.isTTY) {
+      resolve(defaultValue);
+      return;
+    }
+    const rl = require("readline").createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    rl.question(prompt, (answer: string) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+/** Valida una URL HTTP(S) de RPC Sepolia (Infura / Alchemy / QuickNode / genérica). */
+function isValidSepoliaRpcUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return false;
+    }
+    return /sepolia/i.test(url);
+  } catch {
+    return false;
+  }
+}
+
 // ─── Main ───────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -212,6 +244,25 @@ async function main() {
   }
 
   console.log("✅ URL de Alchemy validada:", alchemyUrl);
+
+  // 1b. Nodo RPC de respaldo opcional (VOTAR-386)
+  console.log("\n── Nodo RPC de respaldo (opcional, VOTAR-386) ─────────");
+  console.log("  Podés configurar Infura / Alchemy / QuickNode como failover.");
+  console.log("  Si dejás vacío, no se escribe ninguna URL de respaldo.\n");
+  const fallbackRpcUrl = await askQuestion(
+    "URL del nodo RPC de respaldo (Enter para omitir): "
+  );
+  if (fallbackRpcUrl && !isValidSepoliaRpcUrl(fallbackRpcUrl)) {
+    console.error("❌ La URL de respaldo no parece válida o no es de Sepolia.");
+    console.error("   Ejemplo: https://sepolia.infura.io/v3/XXXX");
+    console.error("   URL recibida:", fallbackRpcUrl);
+    process.exit(1);
+  }
+  if (fallbackRpcUrl) {
+    console.log("✅ URL de respaldo:", fallbackRpcUrl);
+  } else {
+    console.log("  (sin nodo de respaldo)");
+  }
 
   // 2. Generar wallet
   console.log("\n── Paso 1: Generando wallet ──────────────────────────");
@@ -239,11 +290,18 @@ async function main() {
   console.log("\n── Paso 2: Configurando blockchain/.env ──────────────");
   const blockchainEnv = path.join(blockchainRoot, ".env");
   ensureEnvExists(blockchainEnv);
+  // PAUSER_OPERATOR_ADDRESS = misma wallet operativa (PRIVATE_KEY) usada por el backend.
+  // Si queda el placeholder del .env.example, deploy-sepolia-stack falla con
+  // "PAUSER_OPERATOR_ADDRESS is not a valid address: pauser_operator_address".
   writeEnvVars(blockchainEnv, {
     SEPOLIA_RPC_URL: alchemyUrl,
     PRIVATE_KEY: privateKey,
     ADMIN_MULTISIG_ADDRESS: address,
+    PAUSER_OPERATOR_ADDRESS: address,
     MERKLE_ROOT_STORE_ADDRESS: "",
+    ...(fallbackRpcUrl
+      ? { SEPOLIA_RPC_FALLBACK_URLS: fallbackRpcUrl }
+      : {}),
   });
   console.log("  ✅ blockchain/.env actualizado.");
 
@@ -255,6 +313,9 @@ async function main() {
     SEPOLIA_RPC_URL: alchemyUrl,
     PRIVATE_KEY: privateKey,
     ADMIN_MULTISIG_ADDRESS: address,
+    ...(fallbackRpcUrl
+      ? { SEPOLIA_RPC_FALLBACK_URLS: fallbackRpcUrl }
+      : {}),
   });
   console.log("  ✅ back/.env actualizado.");
 
@@ -267,6 +328,9 @@ async function main() {
     VITE_CHAIN_ID: "11155111",
     VITE_PRIVATE_KEY: privateKey,
     VITE_ADMIN_MULTISIG_ADDRESS: address,
+    ...(fallbackRpcUrl
+      ? { VITE_RPC_FALLBACK_URLS: fallbackRpcUrl }
+      : {}),
   });
   console.log("  ✅ front/.env actualizado.");
 
