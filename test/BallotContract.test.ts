@@ -162,6 +162,14 @@ describe("BallotContract — US-339 UATs", () => {
       const [, hasVotedInRegistry] = await registry.getVoterState(ELECTION_ID, VOTER_LEAF);
       expect(hasVotedInRegistry).to.equal(false);
     });
+
+    it("VOTAR-451 — rechaza un segundo castVote del mismo leaf", async () => {
+      await ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof);
+
+      await expect(
+        ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof),
+      ).to.be.revertedWithCustomError(ballot, "AlreadyVoted");
+    });
   });
 
   describe("validation rules", () => {
