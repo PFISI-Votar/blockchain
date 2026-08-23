@@ -452,6 +452,104 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
     });
   });
 
+  describe("VOTAR-451: anti doble voto por leaf (nullifier efímero nuevo)", () => {
+    it("UAT-01 — rechaza un segundo castSignedVote con nullifier distinto y no infla participación", async () => {
+      const firstSignature = await signVote(ephemeralSigner);
+      await ballot
+        .connect(voter)
+        .castSignedVote(
+          ELECTION_ID,
+          VOTER_LEAF,
+          validProof,
+          nullifier,
+          selectionHash,
+          TIMESTAMP,
+          ephemeralSigner.address,
+          firstSignature,
+          CANDIDATE_ID
+        );
+
+      const signers = await ethers.getSigners();
+      const altSigner = signers[4];
+      const altNullifier = ethers.keccak256(
+        ethers.toUtf8Bytes(`alt-nullifier:${altSigner.address}`)
+      );
+      const altSignature = await signVote(altSigner, {
+        nullifier: altNullifier,
+      });
+
+      await expect(
+        ballot
+          .connect(voter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            validProof,
+            altNullifier,
+            selectionHash,
+            TIMESTAMP,
+            altSigner.address,
+            altSignature,
+            CANDIDATE_ID
+          )
+      ).to.be.revertedWithCustomError(ballot, "AlreadyVoted");
+
+      expect(await ballot.hasVoted(ELECTION_ID, VOTER_LEAF)).to.equal(true);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_ID)).to.equal(1n);
+      const [totalVotes] = await registry.getParticipationStats(ELECTION_ID);
+      expect(totalVotes).to.equal(1n);
+      expect(await ballot.isNullifierUsed(ELECTION_ID, altNullifier)).to.equal(
+        false
+      );
+    });
+
+    it("permite re-voto con el mismo nullifier cuando revoteEnabled=true", async () => {
+      const fixture = await deployFixture({
+        revoteEnabled: true,
+        maxVotesPerVoter: 2,
+      });
+      const domain = {
+        name: "VOTAR",
+        version: "1",
+        chainId: (await ethers.provider.getNetwork()).chainId,
+        verifyingContract: await fixture.ballot.getAddress(),
+      };
+      const message = {
+        electionId: ELECTION_ID,
+        nullifier: fixture.nullifier,
+        selectionHash: fixture.selectionHash,
+        candidateId: CANDIDATE_ID,
+        timestamp: TIMESTAMP,
+      };
+      const signature = await fixture.ephemeralSigner.signTypedData(
+        domain,
+        VOTE_TYPE,
+        message
+      );
+      const cast = () =>
+        fixture.ballot
+          .connect(fixture.voter)
+          .castSignedVote(
+            ELECTION_ID,
+            VOTER_LEAF,
+            fixture.validProof,
+            fixture.nullifier,
+            fixture.selectionHash,
+            TIMESTAMP,
+            fixture.ephemeralSigner.address,
+            signature,
+            CANDIDATE_ID
+          );
+
+      await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
+      await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
+      const [totalVotes] = await fixture.registry.getParticipationStats(
+        ELECTION_ID
+      );
+      expect(totalVotes).to.equal(1n);
+    });
+  });
+
   describe("VOTAR-324: límite de sufragios por votante on-chain", () => {
     it("UAT-03 — rechaza el tercer voto firmado cuando maxVotesPerVoter=2 con re-voto habilitado", async () => {
       const fixture = await deployFixture({
@@ -708,7 +806,9 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       await expect(cast()).to.emit(fixture.ballot, "SignedVoteCast");
     });
 
-    it("VOTAR-449: el cooldown de un nullifier no bloquea a otro nullifier distinto", async () => {
+    it("VOTAR-449: el cooldown de un nullifier no bloquea a otro nullifier de otro leaf", async () => {
+      // VOTAR-451: same leaf + different nullifier is AlreadyVoted; isolation is
+      // across distinct padron leaves (two voters), not two ephemeral sessions.
       const fixture = await deployFixture({
         revoteEnabled: true,
         maxVotesPerVoter: 5,
@@ -716,6 +816,16 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
       });
       const castA = await signForFixture(fixture, fixture.ephemeralSigner);
       await castA();
+
+      const otherHash = hashVotante("30111222", "ana@frvm.utn.edu.ar");
+      const otherLeaf = toBytes32Hex(otherHash);
+      const hashes = [
+        otherHash,
+        VOTER_HASH,
+        hashVotante("30333444", "carla@frvm.utn.edu.ar"),
+      ];
+      const { sortedHashes, tree } = buildPadronMerkleTree(hashes);
+      const otherProof = getMerkleProof(tree, sortedHashes.indexOf(otherHash));
 
       const otherNullifier =
         "0x2222222222222222222222222222222222222222222222222222222222222222";
@@ -744,8 +854,8 @@ describe("BallotContract — VOTAR-357 / VOTAR-346 EIP-712 UATs", () => {
           .connect(fixture.voter)
           .castSignedVote(
             ELECTION_ID,
-            VOTER_LEAF,
-            fixture.validProof,
+            otherLeaf,
+            otherProof,
             otherNullifier,
             fixture.selectionHash,
             TIMESTAMP,
