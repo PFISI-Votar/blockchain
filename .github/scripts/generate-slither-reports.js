@@ -1,14 +1,20 @@
 #!/usr/bin/env node
 /**
- * Converts Slither checklist (Markdown) stdout into a self-contained HTML report.
- * Reads SLITHER_REPORT from the environment and writes reports/slither-report.html.
+ * Builds Slither audit reports for CI (VOTAR-351).
+ * Reads SLITHER_REPORT (checklist Markdown) from the environment and writes:
+ *   - reports/slither-report.md
+ *   - reports/slither-report.json  (merges native Slither JSON if present)
+ *   - reports/slither-report.html
  */
 const fs = require("fs");
 const path = require("path");
 
 const markdown = process.env.SLITHER_REPORT ?? "";
 const outDir = path.join(process.cwd(), "reports");
-const outFile = path.join(outDir, "slither-report.html");
+const mdFile = path.join(outDir, "slither-report.md");
+const jsonFile = path.join(outDir, "slither-report.json");
+const htmlFile = path.join(outDir, "slither-report.html");
+const nativeJsonFile = path.join(outDir, "slither-native.json");
 
 const repo = process.env.GITHUB_REPOSITORY ?? "";
 const sha = process.env.GITHUB_SHA ?? "";
@@ -65,7 +71,7 @@ function markdownToHtml(md) {
         html.push("</code></pre>");
         inCode = false;
       } else {
-        html.push('<pre><code>');
+        html.push("<pre><code>");
         inCode = true;
       }
       continue;
@@ -115,9 +121,89 @@ function markdownToHtml(md) {
   return html.join("\n");
 }
 
-const body = markdownToHtml(markdown);
+function loadNativeSlitherJson() {
+  const candidates = [nativeJsonFile, jsonFile];
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) continue;
+    try {
+      return JSON.parse(fs.readFileSync(candidate, "utf8"));
+    } catch {
+      // Keep going; we still emit a metadata envelope.
+    }
+  }
+  return null;
+}
 
-const document = `<!DOCTYPE html>
+function summarizeFindings(native) {
+  const detectors = native?.results?.detectors;
+  if (!Array.isArray(detectors)) {
+    return { findingCount: null, byImpact: null };
+  }
+  const byImpact = {};
+  for (const finding of detectors) {
+    const impact = finding.impact ?? "Unknown";
+    byImpact[impact] = (byImpact[impact] ?? 0) + 1;
+  }
+  return { findingCount: detectors.length, byImpact };
+}
+
+fs.mkdirSync(outDir, { recursive: true });
+
+const mdBody = markdown.trim()
+  ? markdown
+  : "_No se capturó salida de Slither (checklist vacío)._";
+
+const mdDocument = `# Reporte Slither
+
+- Generado: ${generatedAt}
+${repo ? `- Repositorio: ${repo}\n` : ""}${sha ? `- Commit: ${sha}\n` : ""}${
+  runId ? `- GitHub Actions run: ${runId}\n` : ""
+}
+---
+
+${mdBody}
+`;
+
+fs.writeFileSync(mdFile, mdDocument, "utf8");
+
+function loadGateConfig() {
+  const configPath = path.join(process.cwd(), "slither.config.json");
+  try {
+    return JSON.parse(fs.readFileSync(configPath, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+const gateConfig = loadGateConfig();
+const native = loadNativeSlitherJson();
+const { findingCount, byImpact } = summarizeFindings(native);
+
+const jsonDocument = {
+  tool: "slither",
+  generatedAt,
+  repository: repo || null,
+  commit: sha || null,
+  runId: runId || null,
+  qualityGate: {
+    configFile: "slither.config.json",
+    failOn: gateConfig.fail_on ?? "medium",
+    triageDatabase: gateConfig.triage_database ?? "slither.db.json",
+    detectorsToExclude: gateConfig.detectors_to_exclude ?? "",
+  },
+  summary: {
+    findingCount,
+    byImpact,
+    checklistCaptured: Boolean(markdown.trim()),
+  },
+  checklistMarkdown: markdown,
+  slither: native,
+};
+
+fs.writeFileSync(jsonFile, `${JSON.stringify(jsonDocument, null, 2)}\n`, "utf8");
+
+const body = markdownToHtml(markdown);
+const htmlDocument = `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="utf-8" />
@@ -213,6 +299,8 @@ ${body}
 </html>
 `;
 
-fs.mkdirSync(outDir, { recursive: true });
-fs.writeFileSync(outFile, document, "utf8");
-console.log(`Wrote ${outFile}`);
+fs.writeFileSync(htmlFile, htmlDocument, "utf8");
+
+console.log(`Wrote ${mdFile}`);
+console.log(`Wrote ${jsonFile}`);
+console.log(`Wrote ${htmlFile}`);
