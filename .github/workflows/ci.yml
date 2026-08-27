@@ -39,6 +39,9 @@ jobs:
       - name: Run tests on isolated Hardhat network
         run: npm test
 
+  # VOTAR-351 — análisis estático obligatorio (Slither).
+  # MythX queda fuera de alcance (API comercial / presupuesto cero); ver
+  # docs/VOTAR-351-auditoria-smart-contracts.md.
   slither:
     runs-on: ubuntu-latest
     needs: test
@@ -57,9 +60,42 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run Slither static analysis (fail on medium+)
+      - name: Prepare Slither reports directory
+        run: mkdir -p reports
+
+      - name: Run Slither static analysis (threshold from slither.config.json)
+        id: slither
+        continue-on-error: true
         uses: crytic/slither-action@v0.4.2
         with:
-          fail-on: medium
+          # fail_on / filter_paths / detectors_to_exclude / triage_database
+          # viven en slither.config.json (umbrales editables por el equipo).
+          fail-on: config
+          slither-config: slither.config.json
           slither-args: >-
-            --filter-paths "node_modules/|@openzeppelin/"
+            --checklist
+            --markdown-root ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.sha }}/
+            --json reports/slither-native.json
+
+      - name: Generate Slither reports (Markdown, JSON, HTML)
+        if: always()
+        env:
+          SLITHER_REPORT: ${{ steps.slither.outputs.stdout }}
+        run: node .github/scripts/generate-slither-reports.js
+
+      - name: Upload Slither reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slither-report
+          path: |
+            reports/slither-report.md
+            reports/slither-report.json
+            reports/slither-report.html
+          if-no-files-found: error
+
+      - name: Fail job if Slither found medium+ issues
+        if: steps.slither.outcome == 'failure'
+        run: |
+          echo "Slither detected findings at or above the configured fail_on threshold (see slither.config.json)."
+          exit 1
