@@ -61,5 +61,8 @@ Thumbs.db
 .temp/
 .tmp/
 
+# Slither CI HTML reports (generated in pipeline)
+reports/
+
 # Docker 
 Dockerfile
