@@ -14,11 +14,12 @@ import {VotarAccessControl} from "../access/VotarAccessControl.sol";
  *      VOTAR-341 — When `revoteEnabled` is false, a second `recordVote` for the same
  *      nullifier reverts with {RevoteDisabled} (strict uniqueness). Overwrite /
  *      LAST_VOTE_WINS tallies apply only when `revoteEnabled` is true.
- *      VOTAR-326 — Overwrite decrements the previous candidate's tally with an
+ *      VOTAR-326 — Overwrite decrements previous candidate tallies with an
  *      explicit checked guard ({TallyUnderflow}) instead of `unchecked`, and emits
- *      {VoteUpdated} for every recorded vote (including the first, `oldCandidate` =
- *      {SIN_VOTO_PREVIO}) so an off-chain auditor can reconstruct tallies from events
- *      alone (UAT-02).
+ *      {VoteUpdated} for every tally adjustment so an off-chain auditor can
+ *      reconstruct tallies from events alone (UAT-02). Removals use
+ *      `newCandidate = {SIN_VOTO_PREVIO}` (delta −1 only); additions use
+ *      `oldCandidate = {SIN_VOTO_PREVIO}` (delta +1 only).
  *
  *      Reserved candidate IDs for non-partisan ballots (blanco/nulo) are exposed as
  *      constants so auditors and UIs can filter those events the same way as
@@ -31,8 +32,10 @@ import {VotarAccessControl} from "../access/VotarAccessControl.sol";
  *      {InvalidCandidateId}, and voting before the set is sealed reverts with
  *      {CandidateSetNotRegistered}.
  *
- *      Limitation: one `candidateId` per voterHash — multi-category ballots must
- *      project to a single audit id off-chain until a per-category model exists.
+ *      VOTAR-474 — Multi-category ballots: {recordVote} accepts `uint256[]`
+ *      candidateIds and increments each tally. One {VoteCast} is emitted per
+ *      ballot (participation / overwrite signal; `candidateId` is the first id
+ *      for display). One {VoteUpdated} is emitted per id added or removed.
  */
 contract VoteRegistry is VotarAccessControl {
     /// @notice Reserved candidate id for blank ballots (does not collide with real ids).
@@ -41,8 +44,11 @@ contract VoteRegistry is VotarAccessControl {
     /// @notice Reserved candidate id for null ballots.
     uint256 public constant VOTO_NULO = type(uint256).max;
 
-    /// @notice Sentinel `oldCandidate` for {VoteUpdated} when a nullifier votes for the first time.
+    /// @notice Sentinel for {VoteUpdated}: first vote (`old`) or removal (`new`).
     uint256 public constant SIN_VOTO_PREVIO = type(uint256).max - 2;
+
+    /// @notice Hard cap on candidate ids per ballot (DoS / gas bound).
+    uint256 public constant MAX_CANDIDATES_PER_BALLOT = 32;
 
     /// @notice Whether a nullifier may overwrite a previous vote (LAST_VOTE_WINS).
     /// @dev Immutable at deploy; production elections default to `false` (VOTAR-341).
@@ -51,10 +57,13 @@ contract VoteRegistry is VotarAccessControl {
     bool public immutable revoteEnabled;
 
     /**
-     * @notice Public audit event for every successful vote recording.
+     * @notice Public audit event for every successful ballot recording.
      * @dev Only `electionId` and `voterHash` are indexed (gas optimization).
      *      `voterHash` is the anonymous nullifier/anchor — never an identity leaf
      *      nor the submitting wallet address.
+     *      VOTAR-474 — Emitted once per ballot; `candidateId` is the first id of the
+     *      sorted/submitted selection (display). Full tallies come from {VoteUpdated}
+     *      / {getTally}.
      */
     event VoteCast(
         uint256 indexed electionId,
@@ -65,10 +74,10 @@ contract VoteRegistry is VotarAccessControl {
 
     /**
      * @notice VOTAR-326 — Public audit trail of every tally adjustment (LAST_VOTE_WINS).
-     * @dev Emitted on every {recordVote}, including the first vote for a nullifier
-     *      (`oldCandidate = SIN_VOTO_PREVIO`). Summing `+newCandidate` / `-oldCandidate`
-     *      (ignoring `SIN_VOTO_PREVIO`) across all events reconstructs {getTally} exactly
-     *      (UAT-02), without ever revealing voter identity.
+     * @dev Emitted for each candidate id added or removed by {recordVote}.
+     *      Summing `+newCandidate` / `-oldCandidate` while ignoring {SIN_VOTO_PREVIO}
+     *      on either side reconstructs {getTally} exactly (UAT-02), without ever
+     *      revealing voter identity.
      */
     event VoteUpdated(
         uint256 indexed electionId,
@@ -98,11 +107,20 @@ contract VoteRegistry is VotarAccessControl {
     /// @notice VOTAR-345 — Thrown by {recordVote} for an id outside the sealed set / reserved ids.
     error InvalidCandidateId(uint256 electionId, uint256 candidateId);
 
+    /// @notice VOTAR-474 — Thrown when {recordVote} receives an empty candidateIds array.
+    error EmptyBallotSelection();
+
+    /// @notice VOTAR-474 — Thrown when {recordVote} exceeds {MAX_CANDIDATES_PER_BALLOT}.
+    error TooManyCandidates(uint256 count);
+
+    /// @notice VOTAR-474 — Thrown when the same candidateId appears twice in one ballot.
+    error DuplicateCandidateId(uint256 candidateId);
+
     /// @notice VOTAR-345 — Emitted once when a candidate set is sealed for an election.
     event CandidateSetRegistered(uint256 indexed electionId, uint256 candidateCount);
 
     struct VoterState {
-        uint256 candidateId;
+        uint256[] candidateIds;
         bool hasVoted;
     }
 
@@ -129,22 +147,35 @@ contract VoteRegistry is VotarAccessControl {
     }
 
     /**
-     * @notice Records (or overwrites) a vote and emits {VoteCast} atomically.
+     * @notice Records (or overwrites) a multi-candidate ballot and emits audit events.
      * @param electionId Off-chain election identifier.
      * @param voterHash Anonymous per-election anchor (nullifier).
-     * @param candidateId Selected candidate, or {VOTO_BLANCO}/{VOTO_NULO}.
+     * @param candidateIds Selected candidates (one per category), or a single
+     *        {VOTO_BLANCO}/{VOTO_NULO}. Must be non-empty, ≤ {MAX_CANDIDATES_PER_BALLOT},
+     *        with no duplicates.
      */
-    function recordVote(uint256 electionId, bytes32 voterHash, uint256 candidateId)
+    function recordVote(uint256 electionId, bytes32 voterHash, uint256[] calldata candidateIds)
         external
         onlyRole(BALLOT_ROLE)
         whenNotPaused
     {
+        uint256 length = candidateIds.length;
+        if (length == 0) revert EmptyBallotSelection();
+        if (length > MAX_CANDIDATES_PER_BALLOT) revert TooManyCandidates(length);
         if (!_candidateSetSealed[electionId]) revert CandidateSetNotRegistered(electionId);
-        if (!isVotableCandidate(electionId, candidateId)) revert InvalidCandidateId(electionId, candidateId);
+
+        for (uint256 i = 0; i < length; ++i) {
+            uint256 candidateId = candidateIds[i];
+            if (!isVotableCandidate(electionId, candidateId)) {
+                revert InvalidCandidateId(electionId, candidateId);
+            }
+            for (uint256 j = 0; j < i; ++j) {
+                if (candidateIds[j] == candidateId) revert DuplicateCandidateId(candidateId);
+            }
+        }
 
         VoterState storage state = _votes[electionId][voterHash];
         bool isOverwrite = state.hasVoted;
-        uint256 previousCandidateId = isOverwrite ? state.candidateId : SIN_VOTO_PREVIO;
 
         if (isOverwrite) {
             if (!revoteEnabled) {
@@ -153,17 +184,8 @@ contract VoteRegistry is VotarAccessControl {
             unchecked {
                 _totalRevotes[electionId] += 1;
             }
-            if (state.candidateId != candidateId) {
-                if (_tallies[electionId][state.candidateId] == 0) {
-                    revert TallyUnderflow(electionId, state.candidateId);
-                }
-                _tallies[electionId][state.candidateId] -= 1;
-                _tallies[electionId][candidateId] += 1;
-                state.candidateId = candidateId;
-            }
+            _clearPreviousSelection(electionId, voterHash, state);
         } else {
-            _tallies[electionId][candidateId] += 1;
-            state.candidateId = candidateId;
             state.hasVoted = true;
             unchecked {
                 _totalVotes[electionId] += 1;
@@ -172,8 +194,14 @@ contract VoteRegistry is VotarAccessControl {
             _receiptIncluded[voterHash] = true;
         }
 
-        emit VoteCast(electionId, voterHash, candidateId, isOverwrite);
-        emit VoteUpdated(electionId, voterHash, previousCandidateId, candidateId);
+        for (uint256 i = 0; i < length; ++i) {
+            uint256 candidateId = candidateIds[i];
+            _tallies[electionId][candidateId] += 1;
+            state.candidateIds.push(candidateId);
+            emit VoteUpdated(electionId, voterHash, SIN_VOTO_PREVIO, candidateId);
+        }
+
+        emit VoteCast(electionId, voterHash, candidateIds[0], isOverwrite);
     }
 
     /**
@@ -269,13 +297,36 @@ contract VoteRegistry is VotarAccessControl {
         return _receiptIncluded[receiptHash];
     }
 
-    /// @notice Returns the last recorded candidate and whether the voterHash has voted.
+    /**
+     * @notice Returns the recorded candidate ids and whether the voterHash has voted.
+     * @dev VOTAR-474 — `candidateIds` may contain one id per category (or a single
+     *      blanco/nulo). Empty when `hasVoted` is false.
+     */
     function getVoterState(uint256 electionId, bytes32 voterHash)
         external
         view
-        returns (uint256 candidateId, bool hasVoted)
+        returns (uint256[] memory candidateIds, bool hasVoted)
     {
         VoterState storage state = _votes[electionId][voterHash];
-        return (state.candidateId, state.hasVoted);
+        return (state.candidateIds, state.hasVoted);
+    }
+
+    /**
+     * @dev Decrements tallies for the previous selection and clears storage slots.
+     *      Emits {VoteUpdated}(old, SIN) per removed id so auditors apply −1 only.
+     */
+    function _clearPreviousSelection(uint256 electionId, bytes32 voterHash, VoterState storage state)
+        private
+    {
+        uint256 previousLength = state.candidateIds.length;
+        for (uint256 i = 0; i < previousLength; ++i) {
+            uint256 previousCandidateId = state.candidateIds[i];
+            if (_tallies[electionId][previousCandidateId] == 0) {
+                revert TallyUnderflow(electionId, previousCandidateId);
+            }
+            _tallies[electionId][previousCandidateId] -= 1;
+            emit VoteUpdated(electionId, voterHash, previousCandidateId, SIN_VOTO_PREVIO);
+        }
+        delete state.candidateIds;
     }
 }

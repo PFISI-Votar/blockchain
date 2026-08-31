@@ -19,8 +19,11 @@ import {TallyPolicy} from "../types/TallyPolicy.sol";
  *      VOTAR-321 — Rejects votes when election is CLOSED or past endTime (`ElectionClosed`).
  *      VOTAR-346 — Delegates audit `VoteCast` to {VoteRegistry} using nullifier as
  *      anonymous `voterHash`. `SignedVoteCast` is the receipt event and MUST NOT
- *      include `voterLeaf`, so leaf↔nullifier↔candidateId cannot be joined on-chain.
- *      `candidateId` is bound in the EIP-712 Vote digest (integrity of audit tallies).
+ *      include `voterLeaf`, so leaf↔nullifier↔candidateIds cannot be joined on-chain.
+ *      `candidateIds` are bound in the EIP-712 Vote digest (integrity of audit tallies).
+ *      VOTAR-474 — Multi-category ballots: `castSignedVote` accepts `uint256[]`
+ *      candidateIds (EIP-712 domain version "2") and forwards them to
+ *      {VoteRegistry.recordVote} so every category increments its on-chain tally.
  *      VOTAR-341 — `enforceRevotePolicy`: if {VoteRegistry.revoteEnabled} is false and
  *      the nullifier already has a vote entry, reverts with {RevoteDisabled}.
  *
@@ -65,8 +68,9 @@ contract BallotContract is VotarAccessControl, EIP712 {
     /// @notice VOTAR-326 — tally policy frozen at deploy; only LAST_VOTE_WINS is supported.
     TallyPolicy public immutable tallyPolicy;
 
+    /// @dev VOTAR-474 — `uint256[] candidateIds` replaces the single audit id (domain v2).
     bytes32 private constant VOTE_TYPEHASH = keccak256(
-        "Vote(uint256 electionId,bytes32 nullifier,bytes32 selectionHash,uint256 candidateId,uint256 timestamp)"
+        "Vote(uint256 electionId,bytes32 nullifier,bytes32 selectionHash,uint256[] candidateIds,uint256 timestamp)"
     );
 
     /**
@@ -114,7 +118,7 @@ contract BallotContract is VotarAccessControl, EIP712 {
         uint16 maxVotesPerVoter_,
         uint32 minIntervalSeconds_,
         TallyPolicy tallyPolicy_
-    ) VotarAccessControl(admin) EIP712("VOTAR", "1") {
+    ) VotarAccessControl(admin) EIP712("VOTAR", "2") {
         if (merkleRootStoreAddress == address(0)) revert MerkleRootStoreIsZeroAddress();
         if (voteRegistryAddress == address(0)) revert VoteRegistryIsZeroAddress();
         if (maxVotesPerVoter_ == 0) revert InvalidMaxVotesPerVoter();
@@ -155,7 +159,8 @@ contract BallotContract is VotarAccessControl, EIP712 {
      * @param timestamp Unix timestamp captured at signing time on the client.
      * @param expectedSigner Ethereum address derived from the ephemeral session key.
      * @param signature ECDSA signature over the EIP-712 typed data digest.
-     * @param candidateId Audit candidate id (or reserved blanco/nulo), bound in the digest.
+     * @param candidateIds Audit candidate ids (one per category, or a single
+     *        blanco/nulo), bound in the EIP-712 digest (VOTAR-474).
      */
     function castSignedVote(
         uint256 electionId,
@@ -166,7 +171,7 @@ contract BallotContract is VotarAccessControl, EIP712 {
         uint256 timestamp,
         address expectedSigner,
         bytes calldata signature,
-        uint256 candidateId
+        uint256[] calldata candidateIds
     ) external whenNotPaused {
         _assertElectionAcceptingVotes(electionId);
         _assertValidMerkleProof(electionId, voterLeaf, merkleProof);
@@ -176,12 +181,12 @@ contract BallotContract is VotarAccessControl, EIP712 {
         }
         _enforceRevotePolicy(electionId, nullifier);
         _assertValidVoteSignature(
-            electionId, nullifier, selectionHash, candidateId, timestamp, expectedSigner, signature
+            electionId, nullifier, selectionHash, candidateIds, timestamp, expectedSigner, signature
         );
 
         _hasVoted[electionId][voterLeaf] = true;
         // voterHash for audit = nullifier (anonymous anchor, not wallet / leaf).
-        voteRegistry.recordVote(electionId, nullifier, candidateId);
+        voteRegistry.recordVote(electionId, nullifier, candidateIds);
         emit SignedVoteCast(electionId, nullifier, selectionHash, expectedSigner);
     }
 
@@ -264,13 +269,15 @@ contract BallotContract is VotarAccessControl, EIP712 {
         uint256 electionId,
         bytes32 nullifier,
         bytes32 selectionHash,
-        uint256 candidateId,
+        uint256[] calldata candidateIds,
         uint256 timestamp,
         address expectedSigner,
         bytes calldata signature
     ) private view {
+        // EIP-712: dynamic `uint256[]` encodes as keccak256 of packed encodeData elements.
+        bytes32 candidateIdsHash = keccak256(abi.encodePacked(candidateIds));
         bytes32 structHash = keccak256(
-            abi.encode(VOTE_TYPEHASH, electionId, nullifier, selectionHash, candidateId, timestamp)
+            abi.encode(VOTE_TYPEHASH, electionId, nullifier, selectionHash, candidateIdsHash, timestamp)
         );
         address signer = ECDSA.recover(_hashTypedDataV4(structHash), signature);
         if (signer == address(0) || signer != expectedSigner) {
