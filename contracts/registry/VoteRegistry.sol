@@ -150,9 +150,9 @@ contract VoteRegistry is VotarAccessControl {
      * @notice Records (or overwrites) a multi-candidate ballot and emits audit events.
      * @param electionId Off-chain election identifier.
      * @param voterHash Anonymous per-election anchor (nullifier).
-     * @param candidateIds Selected candidates (one per category), or a single
-     *        {VOTO_BLANCO}/{VOTO_NULO}. Must be non-empty, ≤ {MAX_CANDIDATES_PER_BALLOT},
-     *        with no duplicates.
+     * @param candidateIds Selected candidates (one or more per multi-seat
+     *        category), or a single {VOTO_BLANCO}/{VOTO_NULO}. Must be non-empty,
+     *        ≤ {MAX_CANDIDATES_PER_BALLOT}, with no duplicates.
      */
     function recordVote(uint256 electionId, bytes32 voterHash, uint256[] calldata candidateIds)
         external

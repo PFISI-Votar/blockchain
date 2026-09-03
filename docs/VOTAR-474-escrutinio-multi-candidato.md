@@ -20,14 +20,18 @@ primera categoría.
    - Un `VoteUpdated` por id agregado (`old = SIN_VOTO_PREVIO`) o quitado en
      overwrite (`new = SIN_VOTO_PREVIO`). La reconstrucción off-chain ignora el
      sentinel en **ambos** lados.
-4. **Frontend** — `resolveAuditCandidateIds` incluye todas las selecciones por
-   categoría (ordenado), no solo la primera.
+4. **Frontend** — `resolveAuditCandidateIds` incluye **todas** las selecciones
+   (multi-categoría y multi-banca dentro de una categoría cuando
+   `cantidadCargos > 1`), ordenadas, no solo la primera.
+5. **BUD** — el votante puede elegir hasta `cantidadCargos` candidatos por
+   categoría; ese tope se configura en categorías del comicio
+   (“Máx. postulantes / selecciones”) y viaja en la boleta digital.
 
 ## Criterios de aceptación cubiertos
 
 | # | Criterio | Verificación |
 |---|---|---|
-| 1 | Una boleta multi-categoría incrementa el tally de **cada** candidato elegido | `VoteRegistry` + `BallotContract.eip712` tests VOTAR-474 |
+| 1 | Una boleta multi-categoría / multi-banca incrementa el tally de **cada** candidato elegido | `VoteRegistry` + `BallotContract.eip712` tests VOTAR-474 |
 | 2 | `_totalVotes` / participación cuentan **1** votante por boleta | test multi-candidate unique voters |
 | 3 | Blanco / nulo siguen usando el id reservado único | tests existentes de reserved ids |
 | 4 | Overwrite LAST_WINS ajusta todos los ids previos y nuevos | overwrite `[A,B]→[A,C]` |
