@@ -59,6 +59,13 @@ contract ElectionFactory is VotarAccessControl {
     ///         (via an application-level n-of-m confirmation flow) to call pause/unpause.
     address public immutable pauserOperator;
 
+    /// @notice VOTAR-377 — "Entidad de Firmas Digitales" address granted {VALIDATOR_ROLE}
+    ///         on every child BallotContract. Its institutional ECDSA signature over the
+    ///         vote payload certifies padrón membership (Ley 25.506); {BallotContract}
+    ///         rejects any vote whose validator signature does not recover to a holder
+    ///         of this role. Rotatable afterwards by the Multisig (DEFAULT_ADMIN_ROLE).
+    address public immutable validatorSigner;
+
     /// @notice Emitted when a full election stack is deployed.
     event ElectionCreated(
         uint256 indexed electionId,
@@ -75,6 +82,7 @@ contract ElectionFactory is VotarAccessControl {
     error ElectionDoesNotExist(uint256 electionId);
     error MerkleRootStoreIsZeroAddress();
     error PauserOperatorIsZeroAddress();
+    error ValidatorSignerIsZeroAddress();
     error ConfigLocked(uint256 electionId);
 
     mapping(uint256 electionId => ElectionDeployment deployment) private _deployments;
@@ -86,17 +94,24 @@ contract ElectionFactory is VotarAccessControl {
      * @param merkleRootStoreAddress Shared {MerkleRootStore} used by new ballots.
      * @param pauserOperator_ VOTAR-347 — operational address granted PAUSER_ROLE on
      *        every child contract deployed by {createElection}.
+     * @param validatorSigner_ VOTAR-377 — "Entidad de Firmas Digitales" address granted
+     *        VALIDATOR_ROLE on every child BallotContract.
      */
-    constructor(address admin_, address merkleRootStoreAddress, address pauserOperator_)
-        VotarAccessControl(admin_)
-    {
+    constructor(
+        address admin_,
+        address merkleRootStoreAddress,
+        address pauserOperator_,
+        address validatorSigner_
+    ) VotarAccessControl(admin_) {
         // Explicit zero-check (also enforced by {VotarAccessControl}) for Slither.
         if (admin_ == address(0)) revert AdminIsZeroAddress();
         if (merkleRootStoreAddress == address(0)) revert MerkleRootStoreIsZeroAddress();
         if (pauserOperator_ == address(0)) revert PauserOperatorIsZeroAddress();
+        if (validatorSigner_ == address(0)) revert ValidatorSignerIsZeroAddress();
         admin = admin_;
         merkleRootStore = MerkleRootStore(merkleRootStoreAddress);
         pauserOperator = pauserOperator_;
+        validatorSigner = validatorSigner_;
     }
 
     /**
@@ -158,6 +173,8 @@ contract ElectionFactory is VotarAccessControl {
         registry.renounceRole(DEFAULT_ADMIN_ROLE, address(this));
 
         ballotContract.grantRole(ballotContract.PAUSER_ROLE(), pauserOperator);
+        // VOTAR-377 — only the Entidad de Firmas Digitales can certify votes for this ballot.
+        ballotContract.grantRole(ballotContract.VALIDATOR_ROLE(), validatorSigner);
         ballotContract.grantRole(DEFAULT_ADMIN_ROLE, admin);
         ballotContract.renounceRole(DEFAULT_ADMIN_ROLE, address(this));
     }
