@@ -12,19 +12,21 @@ export type TypedDataSigner = {
 };
 
 /**
- * EIP-712 helpers for {BallotContract.castSignedVote} (VOTAR-357 + VOTAR-377).
+ * EIP-712 helpers for {BallotContract.castSignedVote} (VOTAR-357 + VOTAR-377 + VOTAR-474).
  *
  * The ballot payload is bundled into the `SignedVoteInput` calldata struct; the
  * transaction also carries two ECDSA signatures over the same EIP-712 domain:
  *  - `signature`          — ephemeral session key (proves the voter authored the ballot)
  *  - `validatorSignature` — "Entidad de Firmas Digitales" (proves padrón membership)
+ *
+ * Domain version "2" binds `uint256[] candidateIds` in both Vote and Validation.
  */
 export const VOTE_TYPE = {
   Vote: [
     { name: "electionId", type: "uint256" },
     { name: "nullifier", type: "bytes32" },
     { name: "selectionHash", type: "bytes32" },
-    { name: "candidateId", type: "uint256" },
+    { name: "candidateIds", type: "uint256[]" },
     { name: "timestamp", type: "uint256" },
   ],
 };
@@ -34,7 +36,7 @@ export const VALIDATION_TYPE = {
     { name: "electionId", type: "uint256" },
     { name: "nullifier", type: "bytes32" },
     { name: "selectionHash", type: "bytes32" },
-    { name: "candidateId", type: "uint256" },
+    { name: "candidateIds", type: "uint256[]" },
     { name: "timestamp", type: "uint256" },
     { name: "expectedSigner", type: "address" },
   ],
@@ -45,7 +47,7 @@ export interface VoteFields {
   voterLeaf: string;
   nullifier: string;
   selectionHash: string;
-  candidateId: bigint;
+  candidateIds: bigint[];
   timestamp: bigint;
   expectedSigner: string;
 }
@@ -57,7 +59,7 @@ export function toSignedVoteInput(fields: VoteFields) {
     voterLeaf: fields.voterLeaf,
     nullifier: fields.nullifier,
     selectionHash: fields.selectionHash,
-    candidateId: fields.candidateId,
+    candidateIds: fields.candidateIds,
     timestamp: fields.timestamp,
     expectedSigner: fields.expectedSigner,
   };
@@ -66,7 +68,7 @@ export function toSignedVoteInput(fields: VoteFields) {
 export async function eip712Domain(ballot: BallotContract) {
   return {
     name: "VOTAR",
-    version: "1",
+    version: "2",
     chainId: (await ethers.provider.getNetwork()).chainId,
     verifyingContract: await ballot.getAddress(),
   };
@@ -83,7 +85,7 @@ export async function signVote(
     electionId: fields.electionId,
     nullifier: fields.nullifier,
     selectionHash: fields.selectionHash,
-    candidateId: fields.candidateId,
+    candidateIds: fields.candidateIds,
     timestamp: fields.timestamp,
   });
 }
@@ -99,7 +101,7 @@ export async function signValidation(
     electionId: fields.electionId,
     nullifier: fields.nullifier,
     selectionHash: fields.selectionHash,
-    candidateId: fields.candidateId,
+    candidateIds: fields.candidateIds,
     timestamp: fields.timestamp,
     expectedSigner: fields.expectedSigner,
   });

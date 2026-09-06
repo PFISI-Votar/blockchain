@@ -19,8 +19,11 @@ import {TallyPolicy} from "../types/TallyPolicy.sol";
  *      VOTAR-321 — Rejects votes when election is CLOSED or past endTime (`ElectionClosed`).
  *      VOTAR-346 — Delegates audit `VoteCast` to {VoteRegistry} using nullifier as
  *      anonymous `voterHash`. `SignedVoteCast` is the receipt event and MUST NOT
- *      include `voterLeaf`, so leaf↔nullifier↔candidateId cannot be joined on-chain.
- *      `candidateId` is bound in the EIP-712 Vote digest (integrity of audit tallies).
+ *      include `voterLeaf`, so leaf↔nullifier↔candidateIds cannot be joined on-chain.
+ *      `candidateIds` are bound in the EIP-712 Vote digest (integrity of audit tallies).
+ *      VOTAR-474 — Multi-category ballots: `SignedVoteInput.candidateIds` is `uint256[]`
+ *      (EIP-712 domain version "2") and forwarded to {VoteRegistry.recordVote} so every
+ *      category increments its on-chain tally.
  *      VOTAR-341 — `enforceRevotePolicy`: if {VoteRegistry.revoteEnabled} is false and
  *      the nullifier already has a vote entry, reverts with {RevoteDisabled}.
  *
@@ -54,7 +57,7 @@ import {TallyPolicy} from "../types/TallyPolicy.sol";
  *      verified the emitter belongs to the enabled padrón (Ley 25.506). The recovered
  *      signer MUST hold {VALIDATOR_ROLE}, otherwise the transaction reverts with
  *      {MissingValidatorSignature} / {InvalidValidatorSignature}. The digest binds the
- *      whole payload (electionId, nullifier, selectionHash, candidateId, timestamp,
+ *      whole payload (electionId, nullifier, selectionHash, candidateIds, timestamp,
  *      expectedSigner) so an interceptor cannot alter the ballot and keep the signature
  *      valid. It deliberately omits `voterLeaf`, so the institutional signature that
  *      remains in calldata only proves "a padrón member voted", never *which* member.
@@ -70,13 +73,15 @@ contract BallotContract is VotarAccessControl, EIP712 {
      * @dev Grouping the scalar fields keeps {castSignedVote} within the EVM stack
      *      limit once the institutional `validatorSignature` argument is added, and
      *      trims calldata-decoding bytecode (ElectionFactory embeds this init code).
+     *      VOTAR-474 — `candidateIds` is a dynamic array (one id per category, or a
+     *      single blanco/nulo); EIP-712 encodes it as keccak256 of packed elements.
      */
     struct SignedVoteInput {
         uint256 electionId;
         bytes32 voterLeaf;
         bytes32 nullifier;
         bytes32 selectionHash;
-        uint256 candidateId;
+        uint256[] candidateIds;
         uint256 timestamp;
         address expectedSigner;
     }
@@ -90,13 +95,15 @@ contract BallotContract is VotarAccessControl, EIP712 {
     /// @notice VOTAR-326 — tally policy frozen at deploy; only LAST_VOTE_WINS is supported.
     TallyPolicy public immutable tallyPolicy;
 
+    /// @dev VOTAR-474 — `uint256[] candidateIds` replaces the single audit id (domain v2).
     bytes32 private constant VOTE_TYPEHASH = keccak256(
-        "Vote(uint256 electionId,bytes32 nullifier,bytes32 selectionHash,uint256 candidateId,uint256 timestamp)"
+        "Vote(uint256 electionId,bytes32 nullifier,bytes32 selectionHash,uint256[] candidateIds,uint256 timestamp)"
     );
 
     /// @notice VOTAR-377 — institutional certificate ("un padrón member votó").
+    /// @dev VOTAR-474 — Validation digest also binds `candidateIds[]` (same encoding as Vote).
     bytes32 private constant VALIDATION_TYPEHASH = keccak256(
-        "Validation(uint256 electionId,bytes32 nullifier,bytes32 selectionHash,uint256 candidateId,uint256 timestamp,address expectedSigner)"
+        "Validation(uint256 electionId,bytes32 nullifier,bytes32 selectionHash,uint256[] candidateIds,uint256 timestamp,address expectedSigner)"
     );
 
     /**
@@ -148,7 +155,7 @@ contract BallotContract is VotarAccessControl, EIP712 {
         uint16 maxVotesPerVoter_,
         uint32 minIntervalSeconds_,
         TallyPolicy tallyPolicy_
-    ) VotarAccessControl(admin) EIP712("VOTAR", "1") {
+    ) VotarAccessControl(admin) EIP712("VOTAR", "2") {
         if (merkleRootStoreAddress == address(0)) revert MerkleRootStoreIsZeroAddress();
         if (voteRegistryAddress == address(0)) revert VoteRegistryIsZeroAddress();
         if (maxVotesPerVoter_ == 0) revert InvalidMaxVotesPerVoter();
@@ -195,7 +202,7 @@ contract BallotContract is VotarAccessControl, EIP712 {
 
         _hasVoted[vote.electionId][vote.voterLeaf] = true;
         // voterHash for audit = nullifier (anonymous anchor, not wallet / leaf).
-        voteRegistry.recordVote(vote.electionId, vote.nullifier, vote.candidateId);
+        voteRegistry.recordVote(vote.electionId, vote.nullifier, vote.candidateIds);
         emit SignedVoteCast(vote.electionId, vote.nullifier, vote.selectionHash, vote.expectedSigner);
     }
 
@@ -275,9 +282,16 @@ contract BallotContract is VotarAccessControl, EIP712 {
     }
 
     function _assertValidVoteSignature(SignedVoteInput calldata vote, bytes calldata signature) private view {
+        // EIP-712: dynamic `uint256[]` encodes as keccak256 of packed encodeData elements.
+        bytes32 candidateIdsHash = keccak256(abi.encodePacked(vote.candidateIds));
         bytes32 structHash = keccak256(
             abi.encode(
-                VOTE_TYPEHASH, vote.electionId, vote.nullifier, vote.selectionHash, vote.candidateId, vote.timestamp
+                VOTE_TYPEHASH,
+                vote.electionId,
+                vote.nullifier,
+                vote.selectionHash,
+                candidateIdsHash,
+                vote.timestamp
             )
         );
         address signer = ECDSA.recover(_hashTypedDataV4(structHash), signature);
@@ -296,13 +310,14 @@ contract BallotContract is VotarAccessControl, EIP712 {
         private
         view
     {
+        bytes32 candidateIdsHash = keccak256(abi.encodePacked(vote.candidateIds));
         bytes32 structHash = keccak256(
             abi.encode(
                 VALIDATION_TYPEHASH,
                 vote.electionId,
                 vote.nullifier,
                 vote.selectionHash,
-                vote.candidateId,
+                candidateIdsHash,
                 vote.timestamp,
                 vote.expectedSigner
             )

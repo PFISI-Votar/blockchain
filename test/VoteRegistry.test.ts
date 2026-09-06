@@ -46,13 +46,13 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
 
   describe("event structure and indexing", () => {
     it("emits VoteCast with electionId, voterHash, candidateId and isOverwrite=false", async () => {
-      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A))
+      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A]))
         .to.emit(registry, "VoteCast")
         .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, false);
 
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(1n);
-      const [candidateId, hasVoted] = await registry.getVoterState(ELECTION_ID, VOTER_HASH);
-      expect(candidateId).to.equal(CANDIDATE_A);
+      const [candidateIds, hasVoted] = await registry.getVoterState(ELECTION_ID, VOTER_HASH);
+      expect(candidateIds).to.deep.equal([CANDIDATE_A]);
       expect(hasVoted).to.equal(true);
     });
 
@@ -72,7 +72,7 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
 
   describe("blank and null reserved ids", () => {
     it("emits VoteCast for VOTO_BLANCO and increments its tally", async () => {
-      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, VOTO_BLANCO))
+      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [VOTO_BLANCO]))
         .to.emit(registry, "VoteCast")
         .withArgs(ELECTION_ID, VOTER_HASH, VOTO_BLANCO, false);
 
@@ -84,7 +84,7 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
       const otherHash =
         "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
-      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, otherHash, VOTO_NULO))
+      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, otherHash, [VOTO_NULO]))
         .to.emit(registry, "VoteCast")
         .withArgs(ELECTION_ID, otherHash, VOTO_NULO, false);
 
@@ -95,28 +95,34 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
   describe("overwrite flag and atomic tally updates", () => {
     it("emits isOverwrite=true and adjusts tallies when candidate changes", async () => {
       expect(await registry.revoteEnabled()).to.equal(true);
-      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A))
+      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A]))
         .to.emit(registry, "VoteUpdated")
         .withArgs(ELECTION_ID, VOTER_HASH, await registry.SIN_VOTO_PREVIO(), CANDIDATE_A);
 
-      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_B))
+      const sinVotoPrevio = await registry.SIN_VOTO_PREVIO();
+      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_B]))
         .to.emit(registry, "VoteCast")
         .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_B, true)
         .and.to.emit(registry, "VoteUpdated")
-        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, CANDIDATE_B);
+        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, sinVotoPrevio)
+        .and.to.emit(registry, "VoteUpdated")
+        .withArgs(ELECTION_ID, VOTER_HASH, sinVotoPrevio, CANDIDATE_B);
 
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(0n);
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_B)).to.equal(1n);
     });
 
     it("keeps tallies stable when overwriting with the same candidateId", async () => {
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A]);
 
-      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A))
+      const sinVotoPrevio = await registry.SIN_VOTO_PREVIO();
+      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A]))
         .to.emit(registry, "VoteCast")
         .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, true)
         .and.to.emit(registry, "VoteUpdated")
-        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, CANDIDATE_A);
+        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, sinVotoPrevio)
+        .and.to.emit(registry, "VoteUpdated")
+        .withArgs(ELECTION_ID, VOTER_HASH, sinVotoPrevio, CANDIDATE_A);
 
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(1n);
     });
@@ -124,17 +130,22 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
 
   describe("VOTAR-326: política LAST_WINS — VoteUpdated y protección de underflow", () => {
     it("UAT-01 — tres votos secuenciales del mismo votante emiten 3 VoteUpdated y solo el último cuenta", async () => {
-      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A))
+      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A]))
         .to.emit(registry, "VoteUpdated")
         .withArgs(ELECTION_ID, VOTER_HASH, await registry.SIN_VOTO_PREVIO(), CANDIDATE_A);
 
       const CANDIDATE_C = 303n;
-      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_B))
+      const sinVotoPrevio = await registry.SIN_VOTO_PREVIO();
+      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_B]))
         .to.emit(registry, "VoteUpdated")
-        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, CANDIDATE_B);
-      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_C))
+        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, sinVotoPrevio)
+        .and.to.emit(registry, "VoteUpdated")
+        .withArgs(ELECTION_ID, VOTER_HASH, sinVotoPrevio, CANDIDATE_B);
+      await expect(registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_C]))
         .to.emit(registry, "VoteUpdated")
-        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_B, CANDIDATE_C);
+        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_B, sinVotoPrevio)
+        .and.to.emit(registry, "VoteUpdated")
+        .withArgs(ELECTION_ID, VOTER_HASH, sinVotoPrevio, CANDIDATE_C);
 
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(0n);
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_B)).to.equal(0n);
@@ -149,10 +160,10 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
         "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
       const CANDIDATE_C = 303n;
 
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A);
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_B);
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_C);
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash2, CANDIDATE_A);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A]);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_B]);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_C]);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash2, [CANDIDATE_A]);
 
       const sinVotoPrevio = await registry.SIN_VOTO_PREVIO();
       const filter = registry.filters.VoteUpdated(ELECTION_ID);
@@ -165,7 +176,7 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
       for (const ev of events) {
         const { oldCandidate, newCandidate } = ev.args;
         if (oldCandidate !== sinVotoPrevio) bump(oldCandidate, -1n);
-        bump(newCandidate, 1n);
+        if (newCandidate !== sinVotoPrevio) bump(newCandidate, 1n);
       }
 
       for (const candidateId of [CANDIDATE_A, CANDIDATE_B, CANDIDATE_C]) {
@@ -196,13 +207,20 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
           ethers.AbiCoder.defaultAbiCoder().encode(["bytes32", "bytes32"], [VOTER_HASH, electionSlot]),
         ),
       );
-      // VoterState { uint256 candidateId; bool hasVoted; } -> 2 slots.
-      const candidateIdSlot = ethers.toBeHex(voterStateSlot, 32);
+      // VoterState { uint256[] candidateIds; bool hasVoted; }:
+      // slot N = array length, data at keccak256(N); slot N+1 = hasVoted.
+      const arrayLengthSlot = ethers.toBeHex(voterStateSlot, 32);
+      const arrayDataSlot = ethers.keccak256(arrayLengthSlot);
       const hasVotedSlot = ethers.toBeHex(voterStateSlot + 1n, 32);
 
       await ethers.provider.send("hardhat_setStorageAt", [
         await registry.getAddress(),
-        candidateIdSlot,
+        arrayLengthSlot,
+        ethers.toBeHex(1, 32),
+      ]);
+      await ethers.provider.send("hardhat_setStorageAt", [
+        await registry.getAddress(),
+        arrayDataSlot,
         ethers.toBeHex(CANDIDATE_A, 32),
       ]);
       await ethers.provider.send("hardhat_setStorageAt", [
@@ -217,7 +235,7 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
       expect(hasVoted).to.equal(true);
 
       await expect(
-        registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_B),
+        registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_B]),
       )
         .to.be.revertedWithCustomError(registry, "TallyUnderflow")
         .withArgs(ELECTION_ID, CANDIDATE_A);
@@ -244,10 +262,10 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
 
       await disabledRegistry
         .connect(ballotSigner)
-        .recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A);
+        .recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A]);
 
       await expect(
-        disabledRegistry.connect(ballotSigner).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_B),
+        disabledRegistry.connect(ballotSigner).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_B]),
       ).to.be.revertedWithCustomError(disabledRegistry, "RevoteDisabled");
 
       expect(await disabledRegistry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(1n);
@@ -258,7 +276,7 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
   describe("access control and pause", () => {
     it("reverts when caller lacks BALLOT_ROLE", async () => {
       await expect(
-        registry.connect(stranger).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A),
+        registry.connect(stranger).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A]),
       ).to.be.revertedWithCustomError(registry, "AccessControlUnauthorizedAccount");
     });
 
@@ -267,12 +285,12 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
       await registry.connect(admin).pause();
 
       await expect(
-        registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A),
+        registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A]),
       ).to.be.revertedWithCustomError(registry, "EnforcedPause");
     });
 
     it("keeps VOTAR-350 view helpers readable while paused", async () => {
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A]);
       await registry.connect(admin).grantRole(await registry.PAUSER_ROLE(), admin.address);
       await registry.connect(admin).pause();
 
@@ -301,8 +319,8 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
       const hash2 =
         "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc";
 
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A);
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash2, VOTO_BLANCO);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A]);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash2, [VOTO_BLANCO]);
 
       let [totalVotes, blankVotes, nullVotes] =
         await registry.getParticipationStats(ELECTION_ID);
@@ -312,7 +330,7 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
       expect(await registry.verifyReceipt(VOTER_HASH)).to.equal(true);
       expect(await registry.verifyReceipt(hash2)).to.equal(true);
 
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash2, VOTO_NULO);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash2, [VOTO_NULO]);
       [totalVotes, blankVotes, nullVotes] =
         await registry.getParticipationStats(ELECTION_ID);
       expect(totalVotes).to.equal(2n);
@@ -328,11 +346,11 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
       const hash3 =
         "0xdddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd";
 
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A);
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash2, CANDIDATE_A);
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash3, VOTO_BLANCO);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A]);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash2, [CANDIDATE_A]);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash3, [VOTO_BLANCO]);
       // overwrite one vote away from A
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash2, CANDIDATE_B);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash2, [CANDIDATE_B]);
 
       const filter = registry.filters.VoteCast(ELECTION_ID);
       const events = await registry.queryFilter(filter);
@@ -357,7 +375,7 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
 
   describe("VOTAR-345 — IDs reservados y sellado del set de candidatos", () => {
     it("UAT-01 — voto en blanco incrementa solo el contador de blancos", async () => {
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, VOTO_BLANCO);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [VOTO_BLANCO]);
 
       expect(await registry.getTally(ELECTION_ID, VOTO_BLANCO)).to.equal(1n);
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(0n);
@@ -365,9 +383,9 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
     });
 
     it("UAT-02 — voto nulo incrementa solo el contador de nulos y no afecta votos válidos", async () => {
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A]);
       const hash2 = "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff00";
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash2, VOTO_NULO);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, hash2, [VOTO_NULO]);
 
       expect(await registry.getTally(ELECTION_ID, VOTO_NULO)).to.equal(1n);
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(1n);
@@ -400,7 +418,7 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
     it("UAT-03 — recordVote rechaza un id que no pertenece al set sellado", async () => {
       const unregisteredId = 999n;
       await expect(
-        registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, unregisteredId),
+        registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [unregisteredId]),
       )
         .to.be.revertedWithCustomError(registry, "InvalidCandidateId")
         .withArgs(ELECTION_ID, unregisteredId);
@@ -409,7 +427,7 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
     it("UAT-03 — recordVote rechaza votos antes de sellar el set de la elección", async () => {
       const electionId2 = ELECTION_ID + 2n;
       await expect(
-        registry.connect(ballotRole).recordVote(electionId2, VOTER_HASH, CANDIDATE_A),
+        registry.connect(ballotRole).recordVote(electionId2, VOTER_HASH, [CANDIDATE_A]),
       )
         .to.be.revertedWithCustomError(registry, "CandidateSetNotRegistered")
         .withArgs(electionId2);
@@ -438,8 +456,8 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
     });
 
     it("UAT-04 — re-voto candidato→blanco decrementa el candidato e incrementa blancos", async () => {
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A);
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, VOTO_BLANCO);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A]);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [VOTO_BLANCO]);
 
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(0n);
       expect(await registry.getTally(ELECTION_ID, VOTO_BLANCO)).to.equal(1n);
@@ -448,16 +466,16 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
     });
 
     it("UAT-04 — re-voto blanco→candidato decrementa blancos e incrementa el candidato", async () => {
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, VOTO_BLANCO);
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [VOTO_BLANCO]);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A]);
 
       expect(await registry.getTally(ELECTION_ID, VOTO_BLANCO)).to.equal(0n);
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(1n);
     });
 
     it("UAT-04 — re-voto blanco→nulo se refleja en ambos contadores reservados", async () => {
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, VOTO_BLANCO);
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, VOTO_NULO);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [VOTO_BLANCO]);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [VOTO_NULO]);
 
       expect(await registry.getTally(ELECTION_ID, VOTO_BLANCO)).to.equal(0n);
       expect(await registry.getTally(ELECTION_ID, VOTO_NULO)).to.equal(1n);
@@ -466,9 +484,9 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
     });
 
     it("UAT-04 — el replay de VoteUpdated reconstruye tallies incluyendo blanco/nulo", async () => {
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, CANDIDATE_A);
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, VOTO_BLANCO);
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, VOTO_NULO);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A]);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [VOTO_BLANCO]);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [VOTO_NULO]);
 
       const sinVotoPrevio = await registry.SIN_VOTO_PREVIO();
       const filter = registry.filters.VoteUpdated(ELECTION_ID);
@@ -480,7 +498,7 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
       for (const ev of events) {
         const { oldCandidate, newCandidate } = ev.args;
         if (oldCandidate !== sinVotoPrevio) bump(oldCandidate, -1n);
-        bump(newCandidate, 1n);
+        if (newCandidate !== sinVotoPrevio) bump(newCandidate, 1n);
       }
 
       for (const candidateId of [CANDIDATE_A, VOTO_BLANCO, VOTO_NULO]) {
@@ -515,7 +533,7 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
       for (let i = 0; i < voters.length; i++) {
         await registry
           .connect(ballotRole)
-          .recordVote(ELECTION_ID, voters[i], i < 3 ? CANDIDATE_A : CANDIDATE_B);
+          .recordVote(ELECTION_ID, voters[i], [i < 3 ? CANDIDATE_A : CANDIDATE_B]);
       }
 
       expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(3n);
@@ -533,7 +551,7 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
           voters.map((voterHash, i) =>
             registry
               .connect(ballotRole)
-              .recordVote(ELECTION_ID, voterHash, newChoices[i], { nonce: startNonce + i }),
+              .recordVote(ELECTION_ID, voterHash, [newChoices[i]], { nonce: startNonce + i }),
           ),
         );
         await ethers.provider.send("evm_mine", []);
@@ -550,10 +568,98 @@ describe("VoteRegistry — VOTAR-346 VoteCast UATs", () => {
       expect(totalVotes).to.equal(5n);
 
       for (let i = 0; i < voters.length; i++) {
-        const [candidateId, hasVoted] = await registry.getVoterState(ELECTION_ID, voters[i]);
+        const [candidateIds, hasVoted] = await registry.getVoterState(ELECTION_ID, voters[i]);
         expect(hasVoted).to.equal(true);
-        expect(candidateId).to.equal(newChoices[i]);
+        expect(candidateIds).to.deep.equal([newChoices[i]]);
       }
     });
   });
+
+  describe("VOTAR-474 — multi-candidate ballots", () => {
+    const CANDIDATE_C = 303n;
+
+    it("recordVote([A,B,C]) increments all three tallies with unique voter count 1", async () => {
+      await expect(
+        registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, [
+          CANDIDATE_A,
+          CANDIDATE_B,
+          CANDIDATE_C,
+        ]),
+      )
+        .to.emit(registry, "VoteCast")
+        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, false);
+
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(1n);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_B)).to.equal(1n);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_C)).to.equal(1n);
+
+      const [totalVotes] = await registry.getParticipationStats(ELECTION_ID);
+      expect(totalVotes).to.equal(1n);
+
+      const [candidateIds, hasVoted] = await registry.getVoterState(ELECTION_ID, VOTER_HASH);
+      expect(hasVoted).to.equal(true);
+      expect(candidateIds).to.deep.equal([CANDIDATE_A, CANDIDATE_B, CANDIDATE_C]);
+    });
+
+    it("overwrite [A,B]→[A,C] adjusts tallies and emits remove/add VoteUpdated", async () => {
+      const sinVotoPrevio = await registry.SIN_VOTO_PREVIO();
+      await registry
+        .connect(ballotRole)
+        .recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A, CANDIDATE_B]);
+
+      await expect(
+        registry
+          .connect(ballotRole)
+          .recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A, CANDIDATE_C]),
+      )
+        .to.emit(registry, "VoteCast")
+        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, true)
+        .and.to.emit(registry, "VoteUpdated")
+        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_A, sinVotoPrevio)
+        .and.to.emit(registry, "VoteUpdated")
+        .withArgs(ELECTION_ID, VOTER_HASH, CANDIDATE_B, sinVotoPrevio)
+        .and.to.emit(registry, "VoteUpdated")
+        .withArgs(ELECTION_ID, VOTER_HASH, sinVotoPrevio, CANDIDATE_A)
+        .and.to.emit(registry, "VoteUpdated")
+        .withArgs(ELECTION_ID, VOTER_HASH, sinVotoPrevio, CANDIDATE_C);
+
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_A)).to.equal(1n);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_B)).to.equal(0n);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_C)).to.equal(1n);
+
+      const [totalVotes] = await registry.getParticipationStats(ELECTION_ID);
+      expect(totalVotes).to.equal(1n);
+    });
+
+    it("reverts EmptyBallotSelection for an empty candidateIds array", async () => {
+      await expect(
+        registry.connect(ballotRole).recordVote(ELECTION_ID, VOTER_HASH, []),
+      ).to.be.revertedWithCustomError(registry, "EmptyBallotSelection");
+    });
+
+    it("reverts DuplicateCandidateId when the ballot repeats an id", async () => {
+      await expect(
+        registry
+          .connect(ballotRole)
+          .recordVote(ELECTION_ID, VOTER_HASH, [CANDIDATE_A, CANDIDATE_A]),
+      )
+        .to.be.revertedWithCustomError(registry, "DuplicateCandidateId")
+        .withArgs(CANDIDATE_A);
+    });
+
+    it("reverts TooManyCandidates when ballot exceeds MAX_CANDIDATES_PER_BALLOT", async () => {
+      const max = await registry.MAX_CANDIDATES_PER_BALLOT();
+      const tooMany = Array.from({ length: Number(max) + 1 }, (_, i) => BigInt(i + 1));
+      // Seal a dedicated election whose allowlist covers 1..33.
+      const electionId2 = ELECTION_ID + 474n;
+      await registry.connect(admin).registerCandidates(electionId2, tooMany);
+
+      await expect(
+        registry.connect(ballotRole).recordVote(electionId2, VOTER_HASH, tooMany),
+      )
+        .to.be.revertedWithCustomError(registry, "TooManyCandidates")
+        .withArgs(tooMany.length);
+    });
+  });
+
 });

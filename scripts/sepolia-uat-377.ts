@@ -109,7 +109,7 @@ async function main() {
     voterLeaf,
     nullifier: ethers.id("uat-377-nullifier"),
     selectionHash: ethers.id("uat-377-selection"),
-    candidateId: CANDIDATE_ID,
+    candidateIds: [CANDIDATE_ID],
     timestamp: VOTE_TIMESTAMP,
     expectedSigner: deployer.address,
   };
@@ -191,7 +191,7 @@ async function main() {
     const digest = ethers.TypedDataEncoder.hash(
       {
         name: "VOTAR",
-        version: "1",
+        version: "2",
         chainId: (await ethers.provider.getNetwork()).chainId,
         verifyingContract: await ballot.getAddress(),
       },
@@ -200,7 +200,7 @@ async function main() {
           { name: "electionId", type: "uint256" },
           { name: "nullifier", type: "bytes32" },
           { name: "selectionHash", type: "bytes32" },
-          { name: "candidateId", type: "uint256" },
+          { name: "candidateIds", type: "uint256[]" },
           { name: "timestamp", type: "uint256" },
           { name: "expectedSigner", type: "address" },
         ],
@@ -254,7 +254,7 @@ async function main() {
       const digest = ethers.TypedDataEncoder.hash(
         {
           name: "VOTAR",
-          version: "1",
+          version: "2",
           chainId: (await ethers.provider.getNetwork()).chainId,
           verifyingContract: await ballot.getAddress(),
         },
@@ -263,7 +263,7 @@ async function main() {
             { name: "electionId", type: "uint256" },
             { name: "nullifier", type: "bytes32" },
             { name: "selectionHash", type: "bytes32" },
-            { name: "candidateId", type: "uint256" },
+            { name: "candidateIds", type: "uint256[]" },
             { name: "timestamp", type: "uint256" },
             { name: "expectedSigner", type: "address" },
           ],
@@ -272,7 +272,7 @@ async function main() {
           electionId: vote.electionId,
           nullifier: vote.nullifier,
           selectionHash: vote.selectionHash,
-          candidateId: vote.candidateId,
+          candidateIds: [...vote.candidateIds],
           timestamp: vote.timestamp,
           expectedSigner: vote.expectedSigner,
         },

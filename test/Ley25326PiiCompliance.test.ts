@@ -201,7 +201,7 @@ describe("VOTAR-378 Ley 25.326 — sin PII on-chain", () => {
         voterLeaf: VOTER_LEAF,
         nullifier,
         selectionHash,
-        candidateId: CANDIDATE_ID,
+        candidateIds: [CANDIDATE_ID],
         timestamp: TIMESTAMP,
         expectedSigner: voter.address,
       };

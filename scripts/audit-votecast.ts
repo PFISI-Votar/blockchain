@@ -1,8 +1,11 @@
 import { ethers, network } from "hardhat";
 
 /**
- * VOTAR-346 UAT helper: filters VoteCast by electionId and compares event-derived
- * tallies with VoteRegistry.getTally (UAT-02), printing a simple audit board (UAT-03).
+ * VOTAR-346 / VOTAR-474 UAT helper: filters VoteCast / VoteUpdated by electionId.
+ *
+ * VoteCast last-per-voter tallies are display-only for multi-category ballots
+ * (VoteCast.candidateId is the first id in the ballot). Authoritative reconstruction
+ * uses VoteUpdated deltas, ignoring SIN_VOTO_PREVIO on both sides (VOTAR-474).
  *
  * Usage:
  *   VOTE_REGISTRY_ADDRESS=0x... ELECTION_ID=346 \
@@ -44,7 +47,7 @@ async function main() {
     eventTallies.set(vote.candidateId, (eventTallies.get(vote.candidateId) ?? 0) + 1);
   }
 
-  console.log(`\n=== VOTAR-346 Audit board (network=${network.name}) ===`);
+  console.log(`\n=== VOTAR-346 VoteCast board (display-only for multi-cat; network=${network.name}) ===`);
   console.log(`VoteRegistry: ${registryAddress}`);
   console.log(`Election ID:  ${electionId}`);
   console.log(`VoteCast events (raw): ${events.length}`);
@@ -79,10 +82,11 @@ async function main() {
 
   console.log("");
   if (mismatches === 0) {
-    console.log("✔ UAT-02: event-derived tallies match VoteRegistry.getTally");
+    console.log("✔ VoteCast last-per-voter (first candidateId) matches getTally for single-id ballots");
   } else {
-    console.error(`✘ UAT-02: ${mismatches} tally mismatch(es)`);
-    process.exitCode = 1;
+    console.warn(
+      `⚠ VoteCast last-per-voter mismatches getTally (${mismatches}) — expected for multi-category ballots; use VoteUpdated cross-check below`,
+    );
   }
 
   // UAT-04 hint: VoteCast topics never include an address-sized wallet topic.
@@ -105,8 +109,9 @@ async function main() {
     deltaTallies.set(candidateId, (deltaTallies.get(candidateId) ?? 0n) + delta);
   for (const ev of updatedEvents) {
     const { oldCandidate, newCandidate } = ev.args;
+    // VOTAR-474 — ignore SIN_VOTO_PREVIO on both sides (add = (SIN, id), remove = (id, SIN)).
     if (oldCandidate !== SIN_VOTO_PREVIO) bump(oldCandidate, -1n);
-    bump(newCandidate, 1n);
+    if (newCandidate !== SIN_VOTO_PREVIO) bump(newCandidate, 1n);
   }
 
   console.log(`\n=== VOTAR-326 LAST_WINS cross-check (VoteUpdated deltas) ===`);

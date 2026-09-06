@@ -58,7 +58,7 @@ describe("BallotContract — US-339 UATs (Merkle eligibility via castSignedVote)
       voterLeaf: VOTER_LEAF,
       nullifier: NULLIFIER,
       selectionHash: SELECTION_HASH,
-      candidateId: CANDIDATE_ID,
+      candidateIds: [CANDIDATE_ID],
       timestamp: TIMESTAMP,
       expectedSigner: ephemeralSigner.address,
       ...overrides,

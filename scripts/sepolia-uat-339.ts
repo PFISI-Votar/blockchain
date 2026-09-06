@@ -219,7 +219,7 @@ async function main() {
     voterLeaf,
     nullifier: NULLIFIER,
     selectionHash: SELECTION_HASH,
-    candidateId: CANDIDATE_ID,
+    candidateIds: [CANDIDATE_ID],
     timestamp: VOTE_TIMESTAMP,
     expectedSigner: deployer.address,
   };
