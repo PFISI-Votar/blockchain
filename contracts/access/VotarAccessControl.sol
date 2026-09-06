@@ -33,6 +33,12 @@ abstract contract VotarAccessControl is AccessControl, Pausable {
     /// @notice Role allowed to manage election lifecycle (state transitions).
     bytes32 public constant ELECTION_ADMIN_ROLE = keccak256("ELECTION_ADMIN_ROLE");
 
+    /// @notice VOTAR-377 — "Entidad de Firmas Digitales" (Tercero de Confianza).
+    ///         Address whose institutional ECDSA signature over the vote payload
+    ///         certifies that the emitter belongs to the enabled padrón (Ley 25.506).
+    ///         Rotatable by DEFAULT_ADMIN_ROLE (Multisig/Governor) for key rotation.
+    bytes32 public constant VALIDATOR_ROLE = keccak256("VALIDATOR_ROLE");
+
     error AdminIsZeroAddress();
 
     /**

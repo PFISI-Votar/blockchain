@@ -12,13 +12,26 @@ import {
   hashVotante,
   toBytes32Hex,
 } from "./helpers/merkle";
+import { castSignedVote, VoteFields } from "./helpers/vote";
 
-describe("BallotContract — US-339 UATs", () => {
+/**
+ * US-339 — Cryptographic validation of the voter on-chain (Merkle eligibility).
+ * Since VOTAR-377 the Merkle-only `castVote` path is gone: every vote goes through
+ * `castSignedVote`, which still runs the same Merkle check (after the institutional
+ * signature check), so these UATs are exercised through the production path.
+ */
+describe("BallotContract — US-339 UATs (Merkle eligibility via castSignedVote)", () => {
   const ELECTION_ID = 339n;
   const VOTER_DNI = "30222333";
   const VOTER_EMAIL = "bruno@frvm.utn.edu.ar";
   const VOTER_HASH = hashVotante(VOTER_DNI, VOTER_EMAIL);
   const VOTER_LEAF = toBytes32Hex(VOTER_HASH);
+  const NULLIFIER =
+    "0x2222222222222222222222222222222222222222222222222222222222222222";
+  const SELECTION_HASH =
+    "0x3333333333333333333333333333333333333333333333333333333333333333";
+  const CANDIDATE_ID = 101n;
+  const TIMESTAMP = 1_700_000_000n;
   const ElectionState = {
     DRAFT: 0,
     CONFIGURED: 1,
@@ -32,15 +45,27 @@ describe("BallotContract — US-339 UATs", () => {
   let ballot: BallotContract;
   let admin: HardhatEthersSigner;
   let merkleUpdater: HardhatEthersSigner;
-  let voter: HardhatEthersSigner;
-  let attacker: HardhatEthersSigner;
+  let ephemeralSigner: HardhatEthersSigner;
+  let validator: HardhatEthersSigner;
+  let gasPayer: HardhatEthersSigner;
   let merkleRoot: string;
   let voterLeafIndex: number;
   let validProof: string[];
 
+  function fields(overrides: Partial<VoteFields> = {}): VoteFields {
+    return {
+      electionId: ELECTION_ID,
+      voterLeaf: VOTER_LEAF,
+      nullifier: NULLIFIER,
+      selectionHash: SELECTION_HASH,
+      candidateIds: [CANDIDATE_ID],
+      timestamp: TIMESTAMP,
+      expectedSigner: ephemeralSigner.address,
+      ...overrides,
+    };
+  }
+
   async function openElectionWindow(
-    store: MerkleRootStore,
-    admin: HardhatEthersSigner,
     electionId: bigint,
     durationSeconds = 3600,
   ) {
@@ -52,18 +77,22 @@ describe("BallotContract — US-339 UATs", () => {
   }
 
   async function deployFixture() {
-    const [admin, merkleUpdater, voter, attacker] = await ethers.getSigners();
+    const [admin, merkleUpdater, ephemeralSigner, validator, gasPayer] =
+      await ethers.getSigners();
 
-    const storeFactory = await ethers.getContractFactory("MerkleRootStore");
-    const store = await storeFactory.deploy(admin.address);
+    const store = await (
+      await ethers.getContractFactory("MerkleRootStore")
+    ).deploy(admin.address);
     await store.waitForDeployment();
 
-    const registryFactory = await ethers.getContractFactory("VoteRegistry");
-    const registry = await registryFactory.deploy(admin.address, false);
+    const registry = await (
+      await ethers.getContractFactory("VoteRegistry")
+    ).deploy(admin.address, false);
     await registry.waitForDeployment();
 
-    const ballotFactory = await ethers.getContractFactory("BallotContract");
-    const ballot = await ballotFactory.deploy(
+    const ballot = await (
+      await ethers.getContractFactory("BallotContract")
+    ).deploy(
       admin.address,
       await store.getAddress(),
       await registry.getAddress(),
@@ -73,12 +102,24 @@ describe("BallotContract — US-339 UATs", () => {
     );
     await ballot.waitForDeployment();
 
+    await ballot
+      .connect(admin)
+      .grantRole(await ballot.VALIDATOR_ROLE(), validator.address);
+
     await registry
       .connect(admin)
       .grantRole(await registry.BALLOT_ROLE(), await ballot.getAddress());
+    await registry
+      .connect(admin)
+      .grantRole(await registry.ELECTION_ADMIN_ROLE(), admin.address);
+    await registry.connect(admin).registerCandidates(ELECTION_ID, [101n, 102n]);
 
-    await store.connect(admin).grantRole(await store.MERKLE_UPDATER_ROLE(), merkleUpdater.address);
-    await store.connect(admin).grantRole(await store.ELECTION_ADMIN_ROLE(), admin.address);
+    await store
+      .connect(admin)
+      .grantRole(await store.MERKLE_UPDATER_ROLE(), merkleUpdater.address);
+    await store
+      .connect(admin)
+      .grantRole(await store.ELECTION_ADMIN_ROLE(), admin.address);
 
     const hashes = [
       hashVotante("30111222", "ana@frvm.utn.edu.ar"),
@@ -91,7 +132,9 @@ describe("BallotContract — US-339 UATs", () => {
     const validProof = getMerkleProof(tree, voterLeafIndex);
 
     await store.connect(merkleUpdater).publishRoot(ELECTION_ID, merkleRoot);
-    await openElectionWindow(store, admin, ELECTION_ID);
+    const now = await time.latest();
+    await store.connect(admin).setElectionWindow(ELECTION_ID, now, now + 3600);
+    await store.connect(admin).setElectionState(ELECTION_ID, ElectionState.OPEN);
 
     return {
       store,
@@ -99,8 +142,9 @@ describe("BallotContract — US-339 UATs", () => {
       ballot,
       admin,
       merkleUpdater,
-      voter,
-      attacker,
+      ephemeralSigner,
+      validator,
+      gasPayer,
       merkleRoot,
       voterLeafIndex,
       validProof,
@@ -114,8 +158,9 @@ describe("BallotContract — US-339 UATs", () => {
       ballot,
       admin,
       merkleUpdater,
-      voter,
-      attacker,
+      ephemeralSigner,
+      validator,
+      gasPayer,
       merkleRoot,
       voterLeafIndex,
       validProof,
@@ -130,8 +175,13 @@ describe("BallotContract — US-339 UATs", () => {
         ? `${original.slice(0, -1)}b`
         : `${original.slice(0, -1)}a`;
 
-      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, tamperedProof))
-        .to.be.revertedWithCustomError(ballot, "InvalidMerkleProof");
+      await expect(
+        castSignedVote(
+          ballot,
+          { gasPayer, ephemeralSigner, validator, fields: fields(), merkleProof: validProof },
+          { merkleProof: tamperedProof },
+        ),
+      ).to.be.revertedWithCustomError(ballot, "InvalidMerkleProof");
 
       expect(await ballot.hasVoted(ELECTION_ID, VOTER_LEAF)).to.equal(false);
     });
@@ -148,26 +198,56 @@ describe("BallotContract — US-339 UATs", () => {
         foreignIndex,
       );
 
-      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, foreignProof))
-        .to.be.revertedWithCustomError(ballot, "InvalidMerkleProof");
+      await expect(
+        castSignedVote(
+          ballot,
+          { gasPayer, ephemeralSigner, validator, fields: fields(), merkleProof: validProof },
+          { merkleProof: foreignProof },
+        ),
+      ).to.be.revertedWithCustomError(ballot, "InvalidMerkleProof");
     });
   });
 
   describe("UAT-02: procesamiento exitoso con prueba legítima", () => {
-    it("records hasVoted without writing VoteRegistry (no identity↔preference FK)", async () => {
-      await ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof);
+    it("records hasVoted and delegates the anonymous tally to VoteRegistry", async () => {
+      await castSignedVote(ballot, {
+        gasPayer,
+        ephemeralSigner,
+        validator,
+        fields: fields(),
+        merkleProof: validProof,
+      });
 
       expect(await ballot.hasVoted(ELECTION_ID, VOTER_LEAF)).to.equal(true);
-      expect(await registry.getTally(ELECTION_ID, 101n)).to.equal(0n);
-      const [, hasVotedInRegistry] = await registry.getVoterState(ELECTION_ID, VOTER_LEAF);
-      expect(hasVotedInRegistry).to.equal(false);
+      expect(await registry.getTally(ELECTION_ID, CANDIDATE_ID)).to.equal(1n);
+      // The registry is keyed by the anonymous nullifier, never the voter leaf.
+      const [, hasVotedByLeaf] = await registry.getVoterState(
+        ELECTION_ID,
+        VOTER_LEAF,
+      );
+      expect(hasVotedByLeaf).to.equal(false);
     });
 
-    it("VOTAR-451 — rechaza un segundo castVote del mismo leaf", async () => {
-      await ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof);
+    it("VOTAR-451 — rechaza un segundo voto del mismo leaf con nuevo nullifier", async () => {
+      await castSignedVote(ballot, {
+        gasPayer,
+        ephemeralSigner,
+        validator,
+        fields: fields(),
+        merkleProof: validProof,
+      });
 
       await expect(
-        ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof),
+        castSignedVote(ballot, {
+          gasPayer,
+          ephemeralSigner,
+          validator,
+          fields: fields({
+            nullifier:
+              "0x4444444444444444444444444444444444444444444444444444444444444444",
+          }),
+          merkleProof: validProof,
+        }),
       ).to.be.revertedWithCustomError(ballot, "AlreadyVoted");
     });
   });
@@ -175,21 +255,35 @@ describe("BallotContract — US-339 UATs", () => {
   describe("validation rules", () => {
     it("reverts MerkleRootNotPublished when root is not anchored", async () => {
       const unpublishedElectionId = 999n;
-      await openElectionWindow(store, admin, unpublishedElectionId);
+      await openElectionWindow(unpublishedElectionId);
       await expect(
-        ballot.connect(voter).castVote(unpublishedElectionId, VOTER_LEAF, validProof),
+        castSignedVote(ballot, {
+          gasPayer,
+          ephemeralSigner,
+          validator,
+          fields: fields({ electionId: unpublishedElectionId }),
+          merkleProof: validProof,
+        }),
       )
         .to.be.revertedWithCustomError(ballot, "MerkleRootNotPublished")
         .withArgs(unpublishedElectionId);
     });
 
     it("reverts when contract is paused", async () => {
-      const PAUSER_ROLE = await ballot.PAUSER_ROLE();
-      await ballot.connect(admin).grantRole(PAUSER_ROLE, admin.address);
+      await ballot
+        .connect(admin)
+        .grantRole(await ballot.PAUSER_ROLE(), admin.address);
       await ballot.connect(admin).pause();
 
-      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
-        .to.be.revertedWithCustomError(ballot, "EnforcedPause");
+      await expect(
+        castSignedVote(ballot, {
+          gasPayer,
+          ephemeralSigner,
+          validator,
+          fields: fields(),
+          merkleProof: validProof,
+        }),
+      ).to.be.revertedWithCustomError(ballot, "EnforcedPause");
     });
 
     it("reads the anchored root from MerkleRootStore", async () => {
@@ -200,9 +294,19 @@ describe("BallotContract — US-339 UATs", () => {
 
   describe("VOTAR-321 — cierre on-chain ElectionClosed", () => {
     it("reverts ElectionClosed when election state is CLOSED (manual close)", async () => {
-      await store.connect(admin).setElectionState(ELECTION_ID, ElectionState.CLOSED);
+      await store
+        .connect(admin)
+        .setElectionState(ELECTION_ID, ElectionState.CLOSED);
 
-      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
+      await expect(
+        castSignedVote(ballot, {
+          gasPayer,
+          ephemeralSigner,
+          validator,
+          fields: fields(),
+          merkleProof: validProof,
+        }),
+      )
         .to.be.revertedWithCustomError(ballot, "ElectionClosed")
         .withArgs(ELECTION_ID);
     });
@@ -211,7 +315,15 @@ describe("BallotContract — US-339 UATs", () => {
       const endTime = await store.getElectionEndTime(ELECTION_ID);
       await time.increaseTo(endTime);
 
-      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
+      await expect(
+        castSignedVote(ballot, {
+          gasPayer,
+          ephemeralSigner,
+          validator,
+          fields: fields(),
+          merkleProof: validProof,
+        }),
+      )
         .to.be.revertedWithCustomError(ballot, "ElectionClosed")
         .withArgs(ELECTION_ID);
     });
@@ -221,7 +333,15 @@ describe("BallotContract — US-339 UATs", () => {
         .connect(admin)
         .setElectionState(ELECTION_ID, ElectionState.CONFIGURED);
 
-      await expect(ballot.connect(voter).castVote(ELECTION_ID, VOTER_LEAF, validProof))
+      await expect(
+        castSignedVote(ballot, {
+          gasPayer,
+          ephemeralSigner,
+          validator,
+          fields: fields(),
+          merkleProof: validProof,
+        }),
+      )
         .to.be.revertedWithCustomError(ballot, "ElectionClosed")
         .withArgs(ELECTION_ID);
     });

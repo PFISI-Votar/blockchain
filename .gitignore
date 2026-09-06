@@ -64,5 +64,8 @@ Thumbs.db
 # Slither CI reports (Markdown / JSON / HTML generated in pipeline)
 reports/
 
+# HashiCorp Vault dev-mode init dump (unseal keys / root token) — NUNCA commitear
+vault/
+
 # Docker 
 Dockerfile
