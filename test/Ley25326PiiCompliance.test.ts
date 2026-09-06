@@ -14,16 +14,7 @@ import {
   hashVotante,
   toBytes32Hex,
 } from "./helpers/merkle";
-
-const VOTE_TYPE = {
-  Vote: [
-    { name: "electionId", type: "uint256" },
-    { name: "nullifier", type: "bytes32" },
-    { name: "selectionHash", type: "bytes32" },
-    { name: "candidateId", type: "uint256" },
-    { name: "timestamp", type: "uint256" },
-  ],
-};
+import { castSignedVote, VoteFields } from "./helpers/vote";
 
 const ELECTION_ID = 378n;
 const VOTER_DNI = "30222333";
@@ -85,12 +76,13 @@ describe("VOTAR-378 Ley 25.326 — sin PII on-chain", () => {
   let registry: VoteRegistry;
   let ballot: BallotContract;
   let voter: HardhatEthersSigner;
+  let validator: HardhatEthersSigner;
   let validProof: string[];
   let nullifier: string;
   let selectionHash: string;
 
   async function deployFixture() {
-    const [admin, merkleUpdater, voter] = await ethers.getSigners();
+    const [admin, merkleUpdater, validator, voter] = await ethers.getSigners();
 
     const storeFactory = await ethers.getContractFactory("MerkleRootStore");
     const store = await storeFactory.deploy(admin.address);
@@ -110,6 +102,9 @@ describe("VOTAR-378 Ley 25.326 — sin PII on-chain", () => {
       0,
     );
     await ballot.waitForDeployment();
+
+    // VOTAR-377 — Entidad de Firmas Digitales must hold VALIDATOR_ROLE.
+    await ballot.connect(admin).grantRole(await ballot.VALIDATOR_ROLE(), validator.address);
 
     await registry.connect(admin).grantRole(await registry.BALLOT_ROLE(), await ballot.getAddress());
     await registry.connect(admin).grantRole(await registry.ELECTION_ADMIN_ROLE(), admin.address);
@@ -137,6 +132,7 @@ describe("VOTAR-378 Ley 25.326 — sin PII on-chain", () => {
       registry,
       ballot,
       voter,
+      validator,
       validProof,
       nullifier: "0x1111111111111111111111111111111111111111111111111111111111111111",
       selectionHash: computeSelectionHash(),
@@ -144,7 +140,7 @@ describe("VOTAR-378 Ley 25.326 — sin PII on-chain", () => {
   }
 
   beforeEach(async () => {
-    ({ store, registry, ballot, voter, validProof, nullifier, selectionHash } =
+    ({ store, registry, ballot, voter, validator, validProof, nullifier, selectionHash } =
       await loadFixture(deployFixture));
   });
 
@@ -199,32 +195,24 @@ describe("VOTAR-378 Ley 25.326 — sin PII on-chain", () => {
     });
 
     it("un voto firmado no deja DNI/email/nombre en calldata, logs ni argumentos decodificados", async () => {
-      const domain = {
-        name: "VOTAR",
-        version: "1",
-        chainId: (await ethers.provider.getNetwork()).chainId,
-        verifyingContract: await ballot.getAddress(),
-      };
-      const message = {
+      // VOTAR-377 — castSignedVote(SignedVoteInput, merkleProof, signature, validatorSignature).
+      const fields: VoteFields = {
         electionId: ELECTION_ID,
+        voterLeaf: VOTER_LEAF,
         nullifier,
         selectionHash,
         candidateId: CANDIDATE_ID,
         timestamp: TIMESTAMP,
+        expectedSigner: voter.address,
       };
-      const signature = await voter.signTypedData(domain, VOTE_TYPE, message);
 
-      const tx = await ballot.connect(voter).castSignedVote(
-        ELECTION_ID,
-        VOTER_LEAF,
-        validProof,
-        nullifier,
-        selectionHash,
-        TIMESTAMP,
-        voter.address,
-        signature,
-        CANDIDATE_ID,
-      );
+      const tx = await castSignedVote(ballot, {
+        gasPayer: voter,
+        ephemeralSigner: voter,
+        validator,
+        fields,
+        merkleProof: validProof,
+      });
       const receipt = await tx.wait();
       expect(receipt).to.not.equal(null);
 

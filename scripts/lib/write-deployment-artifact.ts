@@ -31,6 +31,8 @@ export type ElectionFactoryDeploymentArtifact = {
   merkleRootStore: string;
   /** VOTAR-347 — operational address granted PAUSER_ROLE on every created election. */
   pauserOperator: string;
+  /** VOTAR-377 — Entidad de Firmas Digitales address granted VALIDATOR_ROLE on every created election. */
+  validatorSigner: string;
   verified: boolean;
   deployedAt: string;
 };
@@ -88,11 +90,13 @@ export const writeElectionFactoryArtifact = (
       artifact.admin,
       artifact.merkleRootStore,
       artifact.pauserOperator,
+      artifact.validatorSigner,
     ],
     meta: {
       admin: artifact.admin,
       merkleRootStore: artifact.merkleRootStore,
       pauserOperator: artifact.pauserOperator,
+      validatorSigner: artifact.validatorSigner,
     },
   };
   const outPath = deploymentsRoot(artifact.network, "ElectionFactory.json");
