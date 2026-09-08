@@ -298,6 +298,7 @@ async function main() {
     PRIVATE_KEY: privateKey,
     ADMIN_MULTISIG_ADDRESS: address,
     PAUSER_OPERATOR_ADDRESS: address,
+    VALIDATOR_ADDRESS: address,
     MERKLE_ROOT_STORE_ADDRESS: "",
     ...(fallbackRpcUrl
       ? { SEPOLIA_RPC_FALLBACK_URLS: fallbackRpcUrl }
