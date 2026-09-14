@@ -150,6 +150,8 @@ Documentación UAT: [`docs/US-385-sepolia-deploy-verify.md`](docs/US-385-sepolia
 |-----|----------|------------------------------|
 | Sepolia | [`0x55d1d115309872C16B9646362C82fFa246F3F652`](https://sepolia.etherscan.io/address/0x55d1d115309872C16B9646362C82fFa246F3F652) | `0x4852CB3d2acA0fDD4677a3e6dD1C2f3AcEFD6928` |
 
+Esa dirección es el harness RBAC de US-349, no la urna de `v2.0.0`. El stack electoral ligado al tag está en [docs/VERSIONADO.md](./docs/VERSIONADO.md).
+
 Evidencia completa de UAT en testnet: [`docs/US-349-sepolia-uat.md`](docs/US-349-sepolia-uat.md).
 
 > **No commitear** `.env` ni claves privadas.
@@ -168,3 +170,30 @@ Cubiertas en `test/VotarAccessControl.test.ts`:
 ### UAT en Sepolia (testnet)
 
 Ver [`docs/US-349-sepolia-uat.md`](docs/US-349-sepolia-uat.md). Script: `scripts/sepolia-uat.ts`.
+
+## Compilación para auditoría
+
+La rama estable es `master` (tag `v2.0.0`). Compilar no requiere `.env`:
+
+```bash
+git clone https://github.com/PFISI-Votar/blockchain.git
+cd blockchain
+git checkout master
+npm ci
+npm run compile
+npm test
+```
+
+Para comparar el hash de ABI con Sepolia, cloná el tag `v2.0.0` (no `dev`) y seguí [docs/VERSIONADO.md](./docs/VERSIONADO.md).
+
+## Publicación open source
+
+| Archivo | Rol |
+| --- | --- |
+| [LICENSE](./LICENSE) | MIT (OSI). |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Cómo colaborar. Los PR entran por `dev`. |
+| [SECURITY.md](./SECURITY.md) | Reporte responsable de vulnerabilidades. |
+| [docs/VERSIONADO.md](./docs/VERSIONADO.md) | Tags, rama `master` y direcciones Sepolia de `v2.0.0`. |
+| [docs/LICENCIAS.md](./docs/LICENCIAS.md) | Política de dependencias y `npm run licenses:check`. |
+
+No commitear `.env` ni claves privadas.
