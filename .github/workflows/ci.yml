@@ -63,6 +63,13 @@ jobs:
       - name: Prepare Slither reports directory
         run: mkdir -p reports
 
+      # VOTAR-495 — evita que un umbral relajado en slither.config.json (o una
+      # exclusión de detector/carpeta sin documentar) pase desapercibido y
+      # convierta el gate en un falso negativo. Sin continue-on-error: si esto
+      # falla, el job debe fallar.
+      - name: Validate Slither gate configuration (Sprint 7 threshold)
+        run: node .github/scripts/validate-slither-gate.js
+
       - name: Run Slither static analysis (threshold from slither.config.json)
         id: slither
         continue-on-error: true
