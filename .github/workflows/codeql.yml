@@ -1,0 +1,47 @@
+# VOTAR-488 — CodeQL en cada PR a dev/master (advanced setup).
+# El default setup semanal sobre master se reemplaza por este workflow.
+# Hallazgos critical (security-severity >= 9.0) fallan el job; el check
+# requerido del ruleset (`ci`) depende de este workflow y bloquea el merge.
+name: CodeQL
+
+on:
+  workflow_call:
+  schedule:
+    - cron: "30 6 * * 1"
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript, actions]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
+          output: codeql-sarif
+          upload: always
+
+      - name: Fail on critical findings
+        run: node .github/scripts/fail-on-critical-codeql.mjs codeql-sarif

@@ -1,0 +1,30 @@
+# VOTAR-488 — actualizaciones de versión. Las alertas CVE y los security
+# updates ya están habilitados en la configuración de Security del repo;
+# este archivo agrega PRs automáticos de dependencias desactualizadas.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Argentina/Cordoba
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    groups:
+      npm:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Argentina/Cordoba
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
