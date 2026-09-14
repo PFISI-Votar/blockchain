@@ -72,6 +72,21 @@ function writeEnvVars(filePath: string, vars: Record<string, string>): void {
   fs.writeFileSync(filePath, lines.join("\n"), "utf8");
 }
 
+/** Quita claves que ya no deben vivir en el cliente (VOTAR-497). */
+function removeEnvKeys(filePath: string, keys: string[]): void {
+  const { lines, map } = readEnv(filePath);
+  const indexes = keys
+    .map((key) => map.get(key))
+    .filter((index): index is number => index !== undefined)
+    .sort((left, right) => right - left);
+  for (const index of indexes) {
+    lines.splice(index, 1);
+  }
+  if (indexes.length > 0) {
+    fs.writeFileSync(filePath, lines.join("\n"), "utf8");
+  }
+}
+
 /**
  * Si el .env no existe, intenta copiarlo desde .env.example.
  * Si tampoco existe el .env.example, crea un .env vacío.
@@ -313,6 +328,7 @@ async function main() {
   writeEnvVars(backEnv, {
     SEPOLIA_RPC_URL: alchemyUrl,
     PRIVATE_KEY: privateKey,
+    RELAYER_PRIVATE_KEY: privateKey,
     ADMIN_MULTISIG_ADDRESS: address,
     ...(fallbackRpcUrl
       ? { SEPOLIA_RPC_FALLBACK_URLS: fallbackRpcUrl }
@@ -327,13 +343,13 @@ async function main() {
   writeEnvVars(frontEnv, {
     VITE_RPC_URL: alchemyUrl,
     VITE_CHAIN_ID: "11155111",
-    VITE_PRIVATE_KEY: privateKey,
     VITE_ADMIN_MULTISIG_ADDRESS: address,
     ...(fallbackRpcUrl
       ? { VITE_RPC_FALLBACK_URLS: fallbackRpcUrl }
       : {}),
   });
-  console.log("  ✅ front/.env actualizado.");
+  removeEnvKeys(frontEnv, ["VITE_PRIVATE_KEY", "VITE_VOTE_TRANSMITTER_PRIVATE_KEY"]);
+  console.log("  ✅ front/.env actualizado (sin clave de gas; la paga el relayer del backend).");
 
   // 7. Pausa: el usuario debe cargar fondos antes del deploy
   console.log("\n")
