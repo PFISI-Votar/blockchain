@@ -1,6 +1,6 @@
 {
   "name": "votar-blockchain",
-  "version": "0.1.0",
+  "version": "2.1.0",
   "description": "VOTAR on-chain smart contracts (RBAC AccessControl + electoral ecosystem)",
   "license": "MIT",
   "scripts": {
@@ -8,6 +8,8 @@
     "node": "hardhat node",
     "deploy:local": "hardhat run scripts/deploy-local.ts --network localhost",
     "compile": "hardhat compile",
+    "fingerprint": "node scripts/print-contract-fingerprint.mjs",
+    "licenses:check": "node scripts/check-oss-licenses.mjs",
     "test": "hardhat test",
     "test:cov": "hardhat coverage",
     "deploy:sepolia": "hardhat run scripts/deploy.ts --network sepolia",
