@@ -74,6 +74,8 @@ const mergeEnvFile = (
     ...existing,
     ...values,
   };
+  delete merged.VITE_PRIVATE_KEY;
+  delete merged.VITE_VOTE_TRANSMITTER_PRIVATE_KEY;
   writeEnvFile(filePath, merged, headerLines);
 };
 
@@ -262,6 +264,8 @@ async function main() {
       // VOTAR-377 — Entidad de Firmas Digitales signing key (Hardhat account #2).
       VALIDATOR_PRIVATE_KEY: HARDHAT_ACCOUNT_2_PRIVATE_KEY,
       VALIDATOR_ADDRESS: validatorSigner,
+      // VOTAR-497 — gas de castSignedVote. Misma cuenta #0 en local (es la que tiene ETH).
+      RELAYER_PRIVATE_KEY: HARDHAT_ACCOUNT_0_PRIVATE_KEY,
       CHAIN_ID: chainId,
       ETHERSCAN_BASE_URL: "http://localhost",
     },
@@ -279,8 +283,6 @@ async function main() {
       VITE_BALLOT_CONTRACT_ADDRESS: ballotAddress,
       VITE_VOTE_REGISTRY_ADDRESS: registryAddress,
       VITE_AUDIT_VIEW_ADDRESS: auditViewAddress,
-      // Hardhat account #0 — pays gas for castSignedVote (local/testnet only)
-      VITE_VOTE_TRANSMITTER_PRIVATE_KEY: HARDHAT_ACCOUNT_0_PRIVATE_KEY,
     },
     [
       "# Generado automáticamente por blockchain/scripts/deploy-local.ts",

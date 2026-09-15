@@ -163,6 +163,7 @@ votar=# SELECT * FROM eleccion;
 | `RECIBO_SIGNING_PRIVATE_KEY` | Private key generada |
 | `MERKLE_ROOT_STORE_ADDRESS` | Output del deploy |
 | `ELECTION_FACTORY_ADDRESS` | Output del deploy |
+| `RELAYER_PRIVATE_KEY` | Wallet generada. Paga el gas del voto en el relayer del backend (VOTAR-497). No se copia al frontend. |
 
 ### `front/.env`
 
@@ -170,7 +171,8 @@ votar=# SELECT * FROM eleccion;
 |----------|--------|
 | `VITE_RPC_URL` | URL de Alchemy |
 | `VITE_CHAIN_ID` | `11155111` (Sepolia) |
-| `VITE_VOTE_TRANSMITTER_PRIVATE_KEY` | Wallet generada |
 | `VITE_AUDIT_VIEW_ADDRESS` | Address de la wallet |
+
+> El cliente no recibe la clave que paga el gas (`VITE_PRIVATE_KEY` / `VITE_VOTE_TRANSMITTER_PRIVATE_KEY` se eliminan si existían).
 
 > Todas las demás variables que ya existan en los `.env` no son modificadas.
