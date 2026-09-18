@@ -21,6 +21,55 @@ function collectSarif(dir, acc = []) {
   return acc
 }
 
+function ingestRules(rules, scores) {
+  for (const rule of rules ?? []) {
+    if (!rule?.id) continue
+    const raw = rule.properties?.['security-severity']
+    const score = raw == null || raw === '' ? null : Number(raw)
+    scores.set(rule.id, Number.isFinite(score) ? score : null)
+  }
+}
+
+/** Build ruleId → security-severity maps from driver and query-pack extensions. */
+function buildScoreIndexes(run) {
+  const driverScores = new Map()
+  ingestRules(run.tool?.driver?.rules, driverScores)
+
+  const extensionScores = (run.tool?.extensions ?? []).map((ext) => {
+    const scores = new Map()
+    ingestRules(ext.rules, scores)
+    return scores
+  })
+
+  // Flat fallback: driver first, then extensions (query-pack rules win on conflict).
+  const flatScores = new Map(driverScores)
+  for (const scores of extensionScores) {
+    for (const [id, score] of scores) {
+      flatScores.set(id, score)
+    }
+  }
+
+  return { driverScores, extensionScores, flatScores }
+}
+
+function resolveScore(result, indexes) {
+  const ruleId = result.ruleId ?? result.rule?.id ?? 'unknown'
+  const extIndex = result.rule?.toolComponent?.index
+
+  if (typeof extIndex === 'number') {
+    const fromExt = indexes.extensionScores[extIndex]?.get(ruleId)
+    if (fromExt != null) return { ruleId, score: fromExt }
+  }
+
+  // No toolComponent → driver; otherwise fall back across all components.
+  if (result.rule?.toolComponent == null) {
+    const fromDriver = indexes.driverScores.get(ruleId)
+    if (fromDriver != null) return { ruleId, score: fromDriver }
+  }
+
+  return { ruleId, score: indexes.flatScores.get(ruleId) ?? null }
+}
+
 let files
 try {
   files = collectSarif(resultsDir)
@@ -39,16 +88,10 @@ const findings = []
 for (const file of files) {
   const sarif = JSON.parse(readFileSync(file, 'utf8'))
   for (const run of sarif.runs ?? []) {
-    const scores = new Map()
-    for (const rule of run.tool?.driver?.rules ?? []) {
-      const raw = rule.properties?.['security-severity']
-      const score = raw == null || raw === '' ? null : Number(raw)
-      scores.set(rule.id, Number.isFinite(score) ? score : null)
-    }
+    const indexes = buildScoreIndexes(run)
 
     for (const result of run.results ?? []) {
-      const ruleId = result.ruleId ?? result.rule?.id ?? 'unknown'
-      const score = scores.get(ruleId) ?? null
+      const { ruleId, score } = resolveScore(result, indexes)
       if (score == null || score < CRITICAL_MIN) continue
 
       const uri =

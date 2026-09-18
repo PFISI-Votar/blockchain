@@ -25,7 +25,6 @@ jobs:
       actions: read
       contents: read
       security-events: write
-      packages: read
 
   secret-scanning:
     uses: ./.github/workflows/secret-scanning.yml
