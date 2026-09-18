@@ -12,7 +12,7 @@
  * Qué hace:
  *   1. Valida la URL de Alchemy (debe contener "eth-sepolia").
  *   1b. (Opcional) Pregunta por un nodo RPC de respaldo (VOTAR-386). Enter = omitir.
- *   2. Genera una wallet aleatoria (address + privateKey).
+ *   2. Genera dos wallets aleatorias: ops/deployer (PRIVATE_KEY) y relayer (RELAYER_PRIVATE_KEY).
  *   3. Escribe las variables en blockchain/.env (incluye PAUSER_OPERATOR_ADDRESS).
  *   4. Si back/.env no existe, lo copia desde back/.env.example. Luego escribe las variables.
  *   5. Si front/.env no existe, lo copia desde front/.env.example. Luego escribe las variables.
@@ -36,7 +36,8 @@ function siblingRepo(name: string): string {
   return path.resolve(blockchainRoot, "..", name);
 }
 
-/** Lee un .env como texto y lo devuelve como Map<key, lineIndex> + líneas originales. */
+/** Lee un .env como texto y lo devuelve como Map<key, lineIndex> + líneas originales.
+ *  El Map guarda el último índice de cada clave (útil para writeEnvVars). */
 function readEnv(filePath: string): { lines: string[]; map: Map<string, number> } {
   const content = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : "";
   const lines = content.split("\n");
@@ -70,6 +71,27 @@ function writeEnvVars(filePath: string, vars: Record<string, string>): void {
   }
 
   fs.writeFileSync(filePath, lines.join("\n"), "utf8");
+}
+
+/** Quita claves que ya no deben vivir en el cliente (VOTAR-497).
+ *  Elimina TODAS las ocurrencias de cada clave (no solo la última del Map). */
+function removeEnvKeys(filePath: string, keys: string[]): void {
+  const { lines } = readEnv(filePath);
+  const keySet = new Set(keys);
+  const indexes: number[] = [];
+  lines.forEach((line, i) => {
+    const match = line.match(/^([A-Z0-9_]+)\s*=/);
+    if (match && keySet.has(match[1])) {
+      indexes.push(i);
+    }
+  });
+  indexes.sort((left, right) => right - left);
+  for (const index of indexes) {
+    lines.splice(index, 1);
+  }
+  if (indexes.length > 0) {
+    fs.writeFileSync(filePath, lines.join("\n"), "utf8");
+  }
 }
 
 /**
@@ -264,13 +286,21 @@ async function main() {
     console.log("  (sin nodo de respaldo)");
   }
 
-  // 2. Generar wallet
-  console.log("\n── Paso 1: Generando wallet ──────────────────────────");
+  // 2. Generar wallets separadas (ops/deployer ≠ relayer — separation of duties)
+  console.log("\n── Paso 1: Generando wallets (ops + relayer) ──────────");
   const wallet = ethers.Wallet.createRandom();
   const address = wallet.address;
   const privateKey = wallet.privateKey;
-  console.log("  Address:    ", address);
-  console.log("  Private key:", privateKey);
+  const relayerWallet = ethers.Wallet.createRandom();
+  const relayerAddress = relayerWallet.address;
+  const relayerPrivateKey = relayerWallet.privateKey;
+  console.log("  ⚠️  Wallets SEPARADAS (separation of duties):");
+  console.log("     PRIVATE_KEY        → ops/deployer (grants, deploy, pausa)");
+  console.log("     RELAYER_PRIVATE_KEY → solo paga gas de castSignedVote");
+  console.log("  Ops address:    ", address);
+  console.log("  Ops private key:", privateKey);
+  console.log("  Relayer address:", relayerAddress);
+  console.log("  Relayer key:    ", relayerPrivateKey);
 
   // 3. Rutas de los repos
   const blockchainRoot = path.resolve(__dirname, "..", "..");
@@ -313,12 +343,13 @@ async function main() {
   writeEnvVars(backEnv, {
     SEPOLIA_RPC_URL: alchemyUrl,
     PRIVATE_KEY: privateKey,
+    RELAYER_PRIVATE_KEY: relayerPrivateKey,
     ADMIN_MULTISIG_ADDRESS: address,
     ...(fallbackRpcUrl
       ? { SEPOLIA_RPC_FALLBACK_URLS: fallbackRpcUrl }
       : {}),
   });
-  console.log("  ✅ back/.env actualizado.");
+  console.log("  ✅ back/.env actualizado (PRIVATE_KEY ≠ RELAYER_PRIVATE_KEY).");
 
   // 6. Escribir .env de front
   console.log("\n── Paso 4: Configurando front/.env ───────────────────");
@@ -327,23 +358,29 @@ async function main() {
   writeEnvVars(frontEnv, {
     VITE_RPC_URL: alchemyUrl,
     VITE_CHAIN_ID: "11155111",
-    VITE_PRIVATE_KEY: privateKey,
     VITE_ADMIN_MULTISIG_ADDRESS: address,
     ...(fallbackRpcUrl
       ? { VITE_RPC_FALLBACK_URLS: fallbackRpcUrl }
       : {}),
   });
-  console.log("  ✅ front/.env actualizado.");
+  removeEnvKeys(frontEnv, ["VITE_PRIVATE_KEY", "VITE_VOTE_TRANSMITTER_PRIVATE_KEY"]);
+  console.log("  ✅ front/.env actualizado (sin clave de gas; la paga el relayer del backend).");
 
-  // 7. Pausa: el usuario debe cargar fondos antes del deploy
+  // 7. Pausa: el usuario debe cargar fondos en AMBAS wallets antes del deploy
   console.log("\n")
   console.log("╔══════════════════════════════════════════════════════════════════════════════════════╗");
-  console.log("║               (!)   ANTES DE CONTINUAR: CARGÁ FONDOS EN LA WALLET   (!)              ║");
+  console.log("║          (!)   ANTES DE CONTINUAR: CARGÁ FONDOS EN AMBAS WALLETS   (!)               ║");
   console.log("╠══════════════════════════════════════════════════════════════════════════════════════╣");
-  console.log("║                 → Sin fondos el deploy va a fallar por falta de gas ←                ║");
+  console.log("║  ⚠️  Son wallets DISTINTAS (separation of duties). Hay que fondear las DOS.           ║");
+  console.log("║      Sin fondos en ops el deploy falla; sin fondos en relayer no se podrá votar.      ║");
   console.log("║                                                                                      ║");
-  console.log("║  ► Dirección a cargar:                                                               ║");
+  console.log("║  ► 1) Ops / deployer (PRIVATE_KEY) — deploy + grants:                                 ║");
   console.log(`║  ${address}                                          ║`);
+  console.log(`║  https://sepolia.etherscan.io/address/${address}     ║`);
+  console.log("║                                                                                      ║");
+  console.log("║  ► 2) Relayer (RELAYER_PRIVATE_KEY) — gas de castSignedVote:                          ║");
+  console.log(`║  ${relayerAddress}                                          ║`);
+  console.log(`║  https://sepolia.etherscan.io/address/${relayerAddress}     ║`);
   console.log("║                                                                                      ║");
   console.log("║  ► Faucets:                                                                          ║");
   console.log("║  • Google (0.05 ETH cada 24hs):                                                      ║");
@@ -352,12 +389,8 @@ async function main() {
   console.log("║  • Nyan Cat (Miná ~0.05 ETH cada 1 minuto):                                          ║");
   console.log("║  https://sepolia-faucet.pk910.de/                                                    ║");
   console.log("║                                                                                      ║");
-  console.log("║                                                                                      ║");
-  console.log("║  ► Revisá tus fondos en:                                                             ║");
-  console.log(`║  https://sepolia.etherscan.io/address/${address}     ║`);
-  console.log("║                                                                                      ║");
   console.log("╚══════════════════════════════════════════════════════════════════════════════════════╝\n");
-  console.log(`→ Una vez que hayas depositado fondos, presioná ENTER para continuar ← `);
+  console.log(`→ Una vez que hayas depositado fondos en AMBAS direcciones, presioná ENTER ← `);
 
   await waitForEnter("");
 
@@ -433,11 +466,12 @@ async function main() {
   console.log("║                                   SETUP COMPLETADO :)                                ║");
   console.log("╠══════════════════════════════════════════════════════════════════════════════════════╣");
   console.log("║                                                                                      ║");
-  console.log("║  ► Dirección a cargar:                                                               ║");
-  console.log(`║  ${address}                                          ║`);
+  console.log("║  ► Mantener fondeadas AMBAS wallets (ops ≠ relayer):                                  ║");
+  console.log(`║  Ops:     ${address}                            ║`);
+  console.log(`║  Relayer: ${relayerAddress}                            ║`);
   console.log("║                                                                                      ║");
   console.log("╠══════════════════════════════════════════════════════════════════════════════════════╣");
-  console.log("║   Recordá mantener la wallet cargada. Podés usar:                                    ║");
+  console.log("║   Recordá mantener ambas wallets cargadas. Podés usar:                               ║");
   console.log("║                                                                                      ║");
   console.log("║  • Google (0.05 ETH cada 24hs):                                                      ║");
   console.log("║  https://cloud.google.com/application/web3/faucet/ethereum/sepolia                   ║");
@@ -445,9 +479,8 @@ async function main() {
   console.log("║  • Nyan Cat (Miná ~0.05 ETH cada 1 minuto):                                          ║");
   console.log("║  https://sepolia-faucet.pk910.de/                                                    ║");
   console.log("║                                                                                      ║");
-  console.log("║                                                                                      ║");
-  console.log("║  ► Revisá tus fondos en:                                                             ║");
-  console.log(`║  https://sepolia.etherscan.io/address/${address}     ║`);
+  console.log(`║  Ops:     https://sepolia.etherscan.io/address/${address} ║`);
+  console.log(`║  Relayer: https://sepolia.etherscan.io/address/${relayerAddress} ║`);
   console.log("║                                                                                      ║");
   console.log("╚══════════════════════════════════════════════════════════════════════════════════════╝\n");
 }
