@@ -1,0 +1,56 @@
+# VOTAR-488 — CodeQL en cada PR a dev/master (advanced setup).
+# El default setup semanal sobre master se reemplaza por este workflow.
+# Hallazgos critical (security-severity >= 9.0) fallan el job; el check
+# requerido del ruleset (`test`) depende de este workflow y bloquea el merge.
+#
+# Nota (forks): en PRs desde forks, GitHub fuerza GITHUB_TOKEN a solo-lectura
+# y el upload SARIF (`security-events: write`) falla. Los repos de PFISI-Votar
+# no reciben contribuciones externas por fork; los PRs son siempre same-repo.
+name: CodeQL
+
+on:
+  workflow_call:
+  schedule:
+    - cron: "30 6 * * 1"
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript, actions]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
+        with:
+          languages: ${{ matrix.language }}
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@faaca9a8f6edddba5725ffe5adefdab6669a2eca # v3.38.0
+        with:
+          category: "/language:${{ matrix.language }}"
+          output: codeql-sarif
+          upload: always
+
+      - name: Fail on critical findings
+        run: node .github/scripts/fail-on-critical-codeql.mjs codeql-sarif

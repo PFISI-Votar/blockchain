@@ -16,7 +16,22 @@ permissions:
   security-events: write
 
 jobs:
-  test:
+  # VOTAR-488: el ruleset exige el check `test`. El job homónimo más abajo
+  # solo pasa si los tests, CodeQL y secret scanning pasan, así que un
+  # hallazgo crítico o un secreto bloquean el merge sin cambiar el ruleset.
+  codeql:
+    uses: ./.github/workflows/codeql.yml
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+  secret-scanning:
+    uses: ./.github/workflows/secret-scanning.yml
+    permissions:
+      contents: read
+
+  quality:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -42,12 +57,35 @@ jobs:
       - name: Run tests on isolated Hardhat network
         run: npm test
 
+  test:
+    needs: [quality, codeql, secret-scanning]
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require tests, CodeQL and secret scanning
+        env:
+          QUALITY: ${{ needs.quality.result }}
+          CODEQL: ${{ needs.codeql.result }}
+          SECRETS: ${{ needs.secret-scanning.result }}
+        run: |
+          set -eu
+          failed=0
+          for name in QUALITY CODEQL SECRETS; do
+            result="${!name}"
+            echo "$name=$result"
+            if [ "$result" != "success" ]; then
+              failed=1
+            fi
+          done
+          exit "$failed"
+
   # VOTAR-351 — análisis estático obligatorio (Slither).
   # MythX queda fuera de alcance (API comercial / presupuesto cero); ver
   # docs/VOTAR-351-auditoria-smart-contracts.md.
   slither:
     runs-on: ubuntu-latest
-    needs: test
+    needs: quality
     timeout-minutes: 15
 
     steps:
