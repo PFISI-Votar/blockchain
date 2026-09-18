@@ -1,0 +1,29 @@
+# VOTAR-488 — actualizaciones de versión. Las alertas CVE y los security
+# updates ya estaban habilitados en la configuración de Security del repo;
+# este archivo agrega PRs automáticos de dependencias desactualizadas.
+# Sin groups: cada dependencia abre su propio PR (limitado a 5 abiertos)
+# para que un CVE urgente (p.ej. @openzeppelin/contracts) no quede atado
+# a un bump breaking no relacionado.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Argentina/Cordoba
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Argentina/Cordoba
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
