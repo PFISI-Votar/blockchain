@@ -5,6 +5,14 @@ import {
   hashVotante,
   toBytes32Hex,
 } from "../test/helpers/merkle";
+import { signValidation, signVote, toSignedVoteInput } from "../test/helpers/vote";
+
+const NULLIFIER =
+  "0x33900001339000013390000133900001339000013390000133900001aaaa0001";
+const SELECTION_HASH =
+  "0x0000000000000000000000000000000000000000000000000000000000000abc";
+const CANDIDATE_ID = 101n;
+const VOTE_TIMESTAMP = 1_700_000_000n;
 
 const MERKLE_ROOT_STORE_ADDRESS_ENV = "MERKLE_ROOT_STORE_ADDRESS";
 const BALLOT_CONTRACT_ADDRESS_ENV = "BALLOT_CONTRACT_ADDRESS";
@@ -86,6 +94,17 @@ async function getBallotContractAddress(
     await grantTx.wait();
   }
 
+  // VOTAR-377 — the deployer doubles as the Entidad de Firmas Digitales here.
+  const [deployer] = await ethers.getSigners();
+  const validatorRole = await contract.VALIDATOR_ROLE();
+  if (!(await contract.hasRole(validatorRole, deployer.address))) {
+    const grantValidatorTx = await contract.grantRole(
+      validatorRole,
+      deployer.address,
+    );
+    await grantValidatorTx.wait();
+  }
+
   console.log(`[uat-339] BallotContract deployed at: ${address}`);
   return address;
 }
@@ -150,6 +169,10 @@ async function main() {
   const isPublished = await store.isPublished(TEST_ELECTION_ID);
   const electionIdForUat = isPublished ? TEST_ELECTION_ID + 1n : TEST_ELECTION_ID;
 
+  const adminWallet = adminPrivateKey
+    ? new ethers.Wallet(adminPrivateKey, ethers.provider)
+    : deployer;
+
   try {
     const updater =
       merkleUpdaterAddress === deployer.address
@@ -161,11 +184,49 @@ async function main() {
       await publishTx.wait();
       console.log(`[uat-339] Published Merkle root for election ${electionIdForUat}`);
     }
+
+    // The signed-vote path (VOTAR-357/377) requires an OPEN election window and a
+    // sealed candidate set.
+    const storeAsAdmin = store.connect(adminWallet);
+    await (
+      await storeAsAdmin.setElectionWindow(
+        electionIdForUat,
+        Math.floor(Date.now() / 1000) - 60,
+        Math.floor(Date.now() / 1000) + 3600,
+      )
+    ).wait();
+    await (
+      await storeAsAdmin.setElectionState(electionIdForUat, 2 /* OPEN */)
+    ).wait();
+
+    const registry = await ethers.getContractAt(
+      "VoteRegistry",
+      voteRegistryAddress,
+    );
+    if (!(await registry.isCandidateSetSealed(electionIdForUat))) {
+      await (
+        await registry
+          .connect(adminWallet)
+          .registerCandidates(electionIdForUat, [CANDIDATE_ID])
+      ).wait();
+    }
   } catch (err) {
-    fail("setup: publishRoot for UAT election", err);
+    fail("setup: publishRoot / open election / seal candidates", err);
   }
 
-  // UAT-01: tampered proof → InvalidMerkleProof
+  const baseFields = {
+    electionId: electionIdForUat,
+    voterLeaf,
+    nullifier: NULLIFIER,
+    selectionHash: SELECTION_HASH,
+    candidateIds: [CANDIDATE_ID],
+    timestamp: VOTE_TIMESTAMP,
+    expectedSigner: deployer.address,
+  };
+  const voteSig = await signVote(deployer, ballot, baseFields);
+  const validatorSig = await signValidation(deployer, ballot, baseFields);
+
+  // UAT-01: tampered proof → InvalidMerkleProof (institutional signature is valid).
   try {
     const tamperedProof = [...validProof];
     const original = tamperedProof[0];
@@ -173,7 +234,14 @@ async function main() {
       ? `${original.slice(0, -1)}b`
       : `${original.slice(0, -1)}a`;
 
-    await ballot.connect(deployer).castVote(electionIdForUat, voterLeaf, tamperedProof);
+    await ballot
+      .connect(deployer)
+      .castSignedVote(
+        toSignedVoteInput(baseFields),
+        tamperedProof,
+        voteSig,
+        validatorSig,
+      );
     fail("UAT-01: tampered proof should revert", new Error("Transaction succeeded unexpectedly"));
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -184,14 +252,21 @@ async function main() {
     }
   }
 
-  // UAT-02: valid proof → hasVoted (castVote does not write VoteRegistry)
+  // UAT-02: valid proof + valid signatures → hasVoted
   try {
-    const tx = await ballot.connect(deployer).castVote(electionIdForUat, voterLeaf, validProof);
+    const tx = await ballot
+      .connect(deployer)
+      .castSignedVote(
+        toSignedVoteInput(baseFields),
+        validProof,
+        voteSig,
+        validatorSig,
+      );
     const receipt = await tx.wait();
     const hasVoted = await ballot.hasVoted(electionIdForUat, voterLeaf);
 
     if (!hasVoted) {
-      throw new Error("hasVoted returned false after successful castVote");
+      throw new Error("hasVoted returned false after successful castSignedVote");
     }
 
     pass(`UAT-02: valid proof accepted (tx: ${receipt!.hash})`);

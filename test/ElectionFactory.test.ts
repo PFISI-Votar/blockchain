@@ -20,10 +20,13 @@ describe("ElectionFactory — VOTAR-337", () => {
   let factory: ElectionFactory;
   let merkleStore: MerkleRootStore;
   let admin: HardhatEthersSigner;
+  let pauserOperator: HardhatEthersSigner;
+  let validatorSigner: HardhatEthersSigner;
   let stranger: HardhatEthersSigner;
 
   async function deployFixture() {
-    const [admin, stranger] = await ethers.getSigners();
+    const [admin, pauserOperator, validatorSigner, stranger] =
+      await ethers.getSigners();
 
     const storeFactory = await ethers.getContractFactory("MerkleRootStore");
     const merkleStore = await storeFactory.deploy(admin.address);
@@ -33,37 +36,82 @@ describe("ElectionFactory — VOTAR-337", () => {
     const factory = await factoryFactory.deploy(
       admin.address,
       await merkleStore.getAddress(),
+      pauserOperator.address,
+      validatorSigner.address,
     );
     await factory.waitForDeployment();
 
-    return { factory, merkleStore, admin, stranger };
+    return {
+      factory,
+      merkleStore,
+      admin,
+      pauserOperator,
+      validatorSigner,
+      stranger,
+    };
   }
 
   beforeEach(async () => {
-    ({ factory, merkleStore, admin, stranger } =
+    ({ factory, merkleStore, admin, pauserOperator, validatorSigner, stranger } =
       await loadFixture(deployFixture));
   });
 
   describe("deployment", () => {
-    it("stores admin and shared MerkleRootStore", async () => {
+    it("stores admin, shared MerkleRootStore, pauserOperator and validatorSigner", async () => {
       expect(await factory.admin()).to.equal(admin.address);
       expect(await factory.merkleRootStore()).to.equal(
         await merkleStore.getAddress(),
       );
+      expect(await factory.pauserOperator()).to.equal(pauserOperator.address);
+      expect(await factory.validatorSigner()).to.equal(validatorSigner.address);
     });
 
     it("reverts when MerkleRootStore is zero address", async () => {
       const factoryFactory = await ethers.getContractFactory("ElectionFactory");
       await expect(
-        factoryFactory.deploy(admin.address, ethers.ZeroAddress),
+        factoryFactory.deploy(
+          admin.address,
+          ethers.ZeroAddress,
+          pauserOperator.address,
+          validatorSigner.address,
+        ),
       ).to.be.revertedWithCustomError(factoryFactory, "MerkleRootStoreIsZeroAddress");
     });
 
     it("reverts when admin is zero address", async () => {
       const factoryFactory = await ethers.getContractFactory("ElectionFactory");
       await expect(
-        factoryFactory.deploy(ethers.ZeroAddress, await merkleStore.getAddress()),
+        factoryFactory.deploy(
+          ethers.ZeroAddress,
+          await merkleStore.getAddress(),
+          pauserOperator.address,
+          validatorSigner.address,
+        ),
       ).to.be.revertedWithCustomError(factoryFactory, "AdminIsZeroAddress");
+    });
+
+    it("reverts when pauserOperator is zero address", async () => {
+      const factoryFactory = await ethers.getContractFactory("ElectionFactory");
+      await expect(
+        factoryFactory.deploy(
+          admin.address,
+          await merkleStore.getAddress(),
+          ethers.ZeroAddress,
+          validatorSigner.address,
+        ),
+      ).to.be.revertedWithCustomError(factoryFactory, "PauserOperatorIsZeroAddress");
+    });
+
+    it("reverts when validatorSigner is zero address (VOTAR-377)", async () => {
+      const factoryFactory = await ethers.getContractFactory("ElectionFactory");
+      await expect(
+        factoryFactory.deploy(
+          admin.address,
+          await merkleStore.getAddress(),
+          pauserOperator.address,
+          ethers.ZeroAddress,
+        ),
+      ).to.be.revertedWithCustomError(factoryFactory, "ValidatorSignerIsZeroAddress");
     });
   });
 
@@ -122,6 +170,17 @@ describe("ElectionFactory — VOTAR-337", () => {
       expect(await ballot.tallyPolicy()).to.equal(DEFAULT_REVOTE.policy);
       expect(await ballot.hasRole(await ballot.DEFAULT_ADMIN_ROLE(), admin.address))
         .to.equal(true);
+      // VOTAR-347 — pauserOperator can call pause()/pause(reason) on the fresh ballot.
+      expect(
+        await ballot.hasRole(await ballot.PAUSER_ROLE(), pauserOperator.address),
+      ).to.equal(true);
+      // VOTAR-377 — the Entidad de Firmas Digitales holds VALIDATOR_ROLE on the fresh ballot.
+      expect(
+        await ballot.hasRole(await ballot.VALIDATOR_ROLE(), validatorSigner.address),
+      ).to.equal(true);
+      expect(
+        await ballot.hasRole(await ballot.DEFAULT_ADMIN_ROLE(), await factory.getAddress()),
+      ).to.equal(false);
 
       const ballotRole = await registry.BALLOT_ROLE();
       expect(await registry.hasRole(ballotRole, deployment.ballot)).to.equal(true);
@@ -130,6 +189,10 @@ describe("ElectionFactory — VOTAR-337", () => {
       // VOTAR-345 — admin can seal the candidate set on the freshly deployed registry.
       expect(
         await registry.hasRole(await registry.ELECTION_ADMIN_ROLE(), admin.address),
+      ).to.equal(true);
+      // VOTAR-347 — pauserOperator can call pause()/pause(reason) on the fresh registry.
+      expect(
+        await registry.hasRole(await registry.PAUSER_ROLE(), pauserOperator.address),
       ).to.equal(true);
       expect(
         await registry.hasRole(
