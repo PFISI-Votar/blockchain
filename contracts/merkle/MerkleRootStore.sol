@@ -64,7 +64,11 @@ contract MerkleRootStore is VotarAccessControl {
      * @dev US-336 — Allows backend to signal when voting opens (hermetic seal trigger).
      * @dev VOTAR-321 — CLOSED blocks further votes in BallotContract.
      */
-    function setElectionState(uint256 electionId, ElectionState state) external onlyRole(ELECTION_ADMIN_ROLE) {
+    function setElectionState(uint256 electionId, ElectionState state)
+        external
+        onlyRole(ELECTION_ADMIN_ROLE)
+        whenNotPaused
+    {
         _electionStates[electionId] = state;
         emit ElectionStateChanged(electionId, state);
     }
@@ -79,6 +83,7 @@ contract MerkleRootStore is VotarAccessControl {
     function setElectionWindow(uint256 electionId, uint256 startTime, uint256 endTime)
         external
         onlyRole(ELECTION_ADMIN_ROLE)
+        whenNotPaused
     {
         if (_configLocked[electionId]) revert ConfigLocked(electionId);
         if (endTime == 0 || endTime <= startTime) revert InvalidElectionWindow();
@@ -94,7 +99,7 @@ contract MerkleRootStore is VotarAccessControl {
      *      comicio after opening. Only the voting window, which has no legitimate
      *      reason to change once voting is live, is protected.
      */
-    function lockConfig(uint256 electionId) external onlyRole(ELECTION_ADMIN_ROLE) {
+    function lockConfig(uint256 electionId) external onlyRole(ELECTION_ADMIN_ROLE) whenNotPaused {
         if (_configLocked[electionId]) revert ConfigLocked(electionId);
         _configLocked[electionId] = true;
         emit ConfigurationLocked(electionId);
@@ -111,7 +116,7 @@ contract MerkleRootStore is VotarAccessControl {
      * @param root Keccak-256 Merkle root of the electoral roll.
      * @dev US-336 — Reverts with RootLocked if election is already OPEN, CLOSED, or TALLIED.
      */
-    function publishRoot(uint256 electionId, bytes32 root) external onlyRole(MERKLE_UPDATER_ROLE) {
+    function publishRoot(uint256 electionId, bytes32 root) external onlyRole(MERKLE_UPDATER_ROLE) whenNotPaused {
         if (root == bytes32(0)) revert RootIsZero();
         if (_roots[electionId].root != bytes32(0)) revert RootAlreadyPublished(electionId);
 

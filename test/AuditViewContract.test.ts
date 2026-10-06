@@ -121,8 +121,8 @@ describe("AuditViewContract — VOTAR-350 public view UATs", () => {
 
   describe("UAT-01: gas-free access from empty wallet", () => {
     it("returns participation stats via static call without consuming gas", async () => {
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, CANDIDATE_A);
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, OTHER_RECEIPT, VOTO_BLANCO);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, [CANDIDATE_A]);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, OTHER_RECEIPT, [VOTO_BLANCO]);
 
       const balanceBefore = await ethers.provider.getBalance(emptyWallet.address);
       const [totalVotes, blankVotes, nullVotes] = await auditView
@@ -141,7 +141,7 @@ describe("AuditViewContract — VOTAR-350 public view UATs", () => {
     it("returns true for a receipt hash recorded on-chain", async () => {
       expect(await auditView.verifyReceipt(RECEIPT_HASH)).to.equal(false);
 
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, CANDIDATE_A);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, [CANDIDATE_A]);
 
       expect(await auditView.verifyReceipt(RECEIPT_HASH)).to.equal(true);
       expect(await registry.verifyReceipt(RECEIPT_HASH)).to.equal(true);
@@ -154,7 +154,7 @@ describe("AuditViewContract — VOTAR-350 public view UATs", () => {
 
   describe("UAT-03: unknown candidate id", () => {
     it("returns 0 for getVotesByCandidate with an unregistered candidateId", async () => {
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, CANDIDATE_A);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, [CANDIDATE_A]);
 
       expect(await auditView.getVotesByCandidate(ELECTION_ID, UNKNOWN_CANDIDATE)).to.equal(0n);
       expect(await auditView.getVotesByCandidate(ELECTION_ID, CANDIDATE_A)).to.equal(1n);
@@ -163,14 +163,14 @@ describe("AuditViewContract — VOTAR-350 public view UATs", () => {
 
   describe("UAT-04: reads remain available while paused", () => {
     it("serves view functions after VoteRegistry pause", async () => {
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, CANDIDATE_A);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, [CANDIDATE_A]);
       await store.connect(admin).setElectionState(ELECTION_ID, ElectionState.OPEN);
 
       await registry.connect(admin).grantRole(await registry.PAUSER_ROLE(), admin.address);
       await registry.connect(admin).pause();
 
       await expect(
-        registry.connect(ballotRole).recordVote(ELECTION_ID, OTHER_RECEIPT, VOTO_NULO),
+        registry.connect(ballotRole).recordVote(ELECTION_ID, OTHER_RECEIPT, [VOTO_NULO]),
       ).to.be.revertedWithCustomError(registry, "EnforcedPause");
 
       expect(await auditView.getElectionState(ELECTION_ID)).to.equal(ElectionState.OPEN);
@@ -190,12 +190,12 @@ describe("AuditViewContract — VOTAR-350 public view UATs", () => {
         ethers.id(`voter-${i}`),
       );
       for (const hash of voters) {
-        await registry.connect(ballotRole).recordVote(ELECTION_ID, hash, CANDIDATE_A);
+        await registry.connect(ballotRole).recordVote(ELECTION_ID, hash, [CANDIDATE_A]);
       }
       for (let i = 0; i < 30; i++) {
         await registry
           .connect(ballotRole)
-          .recordVote(ELECTION_ID, voters[i], VOTO_BLANCO);
+          .recordVote(ELECTION_ID, voters[i], [VOTO_BLANCO]);
       }
 
       const [totalRevotes, uniqueVoters, overwriteRatioWad] =
@@ -207,8 +207,8 @@ describe("AuditViewContract — VOTAR-350 public view UATs", () => {
     });
 
     it("is callable gas-free from an empty wallet", async () => {
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, CANDIDATE_A);
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, VOTO_BLANCO);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, [CANDIDATE_A]);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, [VOTO_BLANCO]);
 
       const balanceBefore = await ethers.provider.getBalance(emptyWallet.address);
       await auditView.connect(emptyWallet).getRevoteStats.staticCall(ELECTION_ID);
@@ -220,10 +220,10 @@ describe("AuditViewContract — VOTAR-350 public view UATs", () => {
 
   describe("privacy and participation aggregates", () => {
     it("tracks blank/null and does not expose identity beyond receipt hash", async () => {
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, VOTO_BLANCO);
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, OTHER_RECEIPT, VOTO_NULO);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, [VOTO_BLANCO]);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, OTHER_RECEIPT, [VOTO_NULO]);
       // overwrite blank → candidate (totalVotes stays 2)
-      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, CANDIDATE_A);
+      await registry.connect(ballotRole).recordVote(ELECTION_ID, RECEIPT_HASH, [CANDIDATE_A]);
 
       const [totalVotes, blankVotes, nullVotes] =
         await auditView.getParticipationStats(ELECTION_ID);

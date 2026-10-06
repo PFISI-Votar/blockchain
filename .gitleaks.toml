@@ -1,0 +1,17 @@
+title = "VOTAR secret scanning"
+
+[extend]
+useDefault = true
+
+# Valores públicos: cuentas documentadas de Hardhat Network y hashes
+# on-chain ya publicados. No son credenciales de un entorno real.
+[[allowlists]]
+description = "Hardhat default accounts and published Sepolia identifiers"
+regexTarget = "match"
+regexes = [
+  '''(?i)ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80''',
+  '''(?i)59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d''',
+  '''(?i)5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a''',
+  '''(?i)7f6529cef5733fdd43f39cba31ad045ba66dae37266ffb9683b0793e25f1105f''',
+  '''(?i)201a8e81e858f368259d1fac0ca309a1a70e722031c355f55860af059a04d012''',
+]

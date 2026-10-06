@@ -16,6 +16,14 @@ const HARDHAT_ACCOUNT_0_PRIVATE_KEY =
 const HARDHAT_ACCOUNT_1_PRIVATE_KEY =
   "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
 
+/**
+ * Hardhat default account #2 private key — VOTAR-377 "Entidad de Firmas Digitales"
+ * (VALIDATOR_ROLE) locally. Matches the backend `VALIDATOR_PRIVATE_KEY`.
+ * @see https://hardhat.org/hardhat-network/docs/#accounts
+ */
+const HARDHAT_ACCOUNT_2_PRIVATE_KEY =
+  "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a";
+
 const BACK_ENV_FILE = resolve(__dirname, "../../back/.env.blockchain.local");
 const FRONT_ENV_FILE = resolve(__dirname, "../../front/.env.local");
 
@@ -66,6 +74,8 @@ const mergeEnvFile = (
     ...existing,
     ...values,
   };
+  delete merged.VITE_PRIVATE_KEY;
+  delete merged.VITE_VOTE_TRANSMITTER_PRIVATE_KEY;
   writeEnvFile(filePath, merged, headerLines);
 };
 
@@ -76,7 +86,10 @@ async function main() {
     );
   }
 
-  const [admin, merkleUpdater] = await ethers.getSigners();
+  const [admin, merkleUpdater, validatorSignerAccount] =
+    await ethers.getSigners();
+  const validatorSigner =
+    process.env.VALIDATOR_ADDRESS ?? validatorSignerAccount.address;
 
   const storeFactory = await ethers.getContractFactory("MerkleRootStore");
   const contract = await storeFactory.deploy(admin.address);
@@ -112,12 +125,18 @@ async function main() {
   await auditView.waitForDeployment();
   const auditViewAddress = await auditView.getAddress();
 
+  // VOTAR-347 — operational wallet granted PAUSER_ROLE on every created election.
+  // Locally this is the same admin signer, matching ELECTION_ADMIN_PRIVATE_KEY below.
+  const pauserOperator = process.env.PAUSER_OPERATOR_ADDRESS ?? admin.address;
+
   // VOTAR-337 — ElectionFactory (master) wired to the shared MerkleRootStore.
   const electionFactoryFactory =
     await ethers.getContractFactory("ElectionFactory");
   const electionFactory = await electionFactoryFactory.deploy(
     admin.address,
     contractAddress,
+    pauserOperator,
+    validatorSigner,
   );
   await electionFactory.waitForDeployment();
   const electionFactoryAddress = await electionFactory.getAddress();
@@ -181,6 +200,51 @@ async function main() {
     await grantTx.wait();
   }
 
+  // VOTAR-347 — directly-deployed ballot/registry (outside ElectionFactory)
+  // also need PAUSER_ROLE so the local backend can exercise pause()/unpause().
+  const registryPauserRole = await registry.PAUSER_ROLE();
+  const registryHasPauserRole = await registry.hasRole(
+    registryPauserRole,
+    pauserOperator,
+  );
+  if (!registryHasPauserRole) {
+    console.log(
+      `[deploy-local] Otorgando PAUSER_ROLE (VoteRegistry) a ${pauserOperator}...`,
+    );
+    const grantRegistryPauserTx = await registry
+      .connect(admin)
+      .grantRole(registryPauserRole, pauserOperator);
+    await grantRegistryPauserTx.wait();
+  }
+
+  const ballotPauserRole = await ballot.PAUSER_ROLE();
+  const ballotHasPauserRole = await ballot.hasRole(
+    ballotPauserRole,
+    pauserOperator,
+  );
+  if (!ballotHasPauserRole) {
+    console.log(
+      `[deploy-local] Otorgando PAUSER_ROLE (BallotContract) a ${pauserOperator}...`,
+    );
+    const grantBallotPauserTx = await ballot
+      .connect(admin)
+      .grantRole(ballotPauserRole, pauserOperator);
+    await grantBallotPauserTx.wait();
+  }
+
+  // VOTAR-377 — the directly-deployed ballot also needs VALIDATOR_ROLE so the
+  // local backend "Entidad de Firmas Digitales" can certify votes.
+  const ballotValidatorRole = await ballot.VALIDATOR_ROLE();
+  if (!(await ballot.hasRole(ballotValidatorRole, validatorSigner))) {
+    console.log(
+      `[deploy-local] Otorgando VALIDATOR_ROLE (BallotContract) a ${validatorSigner}...`,
+    );
+    const grantBallotValidatorTx = await ballot
+      .connect(admin)
+      .grantRole(ballotValidatorRole, validatorSigner);
+    await grantBallotValidatorTx.wait();
+  }
+
   const chainId = Number((await ethers.provider.getNetwork()).chainId);
 
   writeEnvFile(
@@ -196,6 +260,12 @@ async function main() {
       ELECTION_FACTORY_ADDRESS: electionFactoryAddress,
       MERKLE_UPDATER_PRIVATE_KEY: HARDHAT_ACCOUNT_1_PRIVATE_KEY,
       ELECTION_ADMIN_PRIVATE_KEY: HARDHAT_ACCOUNT_0_PRIVATE_KEY,
+      PAUSER_OPERATOR_ADDRESS: pauserOperator,
+      // VOTAR-377 — Entidad de Firmas Digitales signing key (Hardhat account #2).
+      VALIDATOR_PRIVATE_KEY: HARDHAT_ACCOUNT_2_PRIVATE_KEY,
+      VALIDATOR_ADDRESS: validatorSigner,
+      // VOTAR-497 — gas de castSignedVote. Misma cuenta #0 en local (es la que tiene ETH).
+      RELAYER_PRIVATE_KEY: HARDHAT_ACCOUNT_0_PRIVATE_KEY,
       CHAIN_ID: chainId,
       ETHERSCAN_BASE_URL: "http://localhost",
     },
@@ -213,8 +283,6 @@ async function main() {
       VITE_BALLOT_CONTRACT_ADDRESS: ballotAddress,
       VITE_VOTE_REGISTRY_ADDRESS: registryAddress,
       VITE_AUDIT_VIEW_ADDRESS: auditViewAddress,
-      // Hardhat account #0 — pays gas for castSignedVote (local/testnet only)
-      VITE_VOTE_TRANSMITTER_PRIVATE_KEY: HARDHAT_ACCOUNT_0_PRIVATE_KEY,
     },
     [
       "# Generado automáticamente por blockchain/scripts/deploy-local.ts",
@@ -231,6 +299,8 @@ async function main() {
   console.log(`[deploy-local] ElectionFactory: ${electionFactoryAddress}`);
   console.log(`[deploy-local] DEFAULT_ADMIN_ROLE: ${admin.address}`);
   console.log(`[deploy-local] MERKLE_UPDATER_ROLE: ${merkleUpdater.address}`);
+  console.log(`[deploy-local] PAUSER_ROLE operator: ${pauserOperator}`);
+  console.log(`[deploy-local] VALIDATOR_ROLE signer: ${validatorSigner}`);
   console.log(`[deploy-local] chainId: ${chainId}`);
 }
 

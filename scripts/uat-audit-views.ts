@@ -37,7 +37,7 @@ async function main() {
   if (await registry.hasRole(ballotRole, admin.address)) {
     const [, hasVoted] = await registry.getVoterState(electionId, receiptHash);
     if (!hasVoted) {
-      await (await registry.connect(admin).recordVote(electionId, receiptHash, candidateId)).wait();
+      await (await registry.connect(admin).recordVote(electionId, receiptHash, [candidateId])).wait();
     }
   }
 

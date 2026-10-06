@@ -1,0 +1,37 @@
+{
+  "version": "v2.0.0",
+  "network": "sepolia",
+  "chainId": 11155111,
+  "deployedAt": "2026-08-10T17:25:14.630Z",
+  "taggedAt": "2026-08-11",
+  "compiler": {
+    "version": "0.8.26",
+    "optimizer": { "enabled": true, "runs": 200 },
+    "evmVersion": "cancun"
+  },
+  "abiHashAlgorithm": "sha256(JSON.stringify(abi))",
+  "notes": "verified=false registra el estado del artefacto de deploy, no una confirmación de Etherscan. Confirmar con el procedimiento de docs/VERSIONADO.md.",
+  "contracts": [
+    {
+      "contractName": "MerkleRootStore",
+      "address": "0xfd9125096DA61C2E88645036EB6C61Af45D4bd02",
+      "abiHash": "0x16bfda3741ac839a1a7386f160de97a7675b25640e185580c1e8fdd81cd3dd48",
+      "txHash": "0x771f582e726607dcf48e3192a7cc01ad663c9ea6f1b1b5e7284ea2a0d8fa73fd",
+      "blockNumber": 11460654,
+      "constructorArguments": ["0x5AdfE82772625E0337e16467b7FC0CE040154457"],
+      "verifiedAtDeploy": false
+    },
+    {
+      "contractName": "ElectionFactory",
+      "address": "0x12e061F229Fa34b444D6548E4f3ee4340249e7e2",
+      "abiHash": "0xf285ae5432d9446be78169b5eb1f3a65e9ec6e1d8a1d2f2f125d04103ac9d14b",
+      "txHash": "0x3a7a22ab4d46dd691d20d131eea80c184c3bd24fc07b66d3dffd5d4c5f7d5f7e",
+      "blockNumber": 11460655,
+      "constructorArguments": [
+        "0x5AdfE82772625E0337e16467b7FC0CE040154457",
+        "0xfd9125096DA61C2E88645036EB6C61Af45D4bd02"
+      ],
+      "verifiedAtDeploy": false
+    }
+  ]
+}

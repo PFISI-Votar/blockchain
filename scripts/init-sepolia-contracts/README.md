@@ -62,14 +62,18 @@ npx ts-node scripts/init-sepolia-contracts/setup-sepolia.ts https://eth-sepolia.
 El script va a:
 
 1. Validar la URL de Alchemy.
-2. Generar una nueva wallet (address + private key).
-3. Escribir las variables necesarias en `blockchain/.env`, `back/.env` y `front/.env`.
+2. **(Opcional, VOTAR-386)** Preguntar si querés un nodo RPC de respaldo (Infura / Alchemy / QuickNode).
+   - Pegá la URL completa y se escribe en `blockchain/.env`, `back/.env` y `front/.env`.
+   - Si dejás vacío (Enter), no se configura failover; el sistema sigue con un solo nodo.
+3. Generar una nueva wallet (address + private key).
+4. Escribir las variables necesarias en `blockchain/.env`, `back/.env` y `front/.env`.
    - Si algún `.env` no existe, lo copia desde `.env.example` antes de modificarlo.
-4. Ejecutar `deploy-sepolia-stack.ts --network sepolia`. Para ello tenés que cargar fondos en tu wallet (seguí el instructivo que se muestra)
-5. Parsear las addresses resultantes del deploy y escribirlas en `back/.env`.
-6. Ejecutar los scripts de grant (`grant-election-admin-local.ts` y `grant-roles-dev.ts`).
-7. Ejecutar `npm run sync:election-factory` en `back/`.
-8. Mostrar la dirección de la wallet y los links de los faucets.
+   - Incluye `PAUSER_OPERATOR_ADDRESS` (misma wallet operativa) para que el deploy no falle con el placeholder del example.
+5. Ejecutar `deploy-sepolia-stack.ts --network sepolia`. Para ello tenés que cargar fondos en tu wallet (seguí el instructivo que se muestra)
+6. Parsear las addresses resultantes del deploy y escribirlas en `back/.env`.
+7. Ejecutar los scripts de grant (`grant-election-admin-local.ts` y `grant-roles-dev.ts`).
+8. Ejecutar `npm run sync:election-factory` en `back/`.
+9. Mostrar la dirección de la wallet y los links de los faucets.
 
 > ⏱️ El deploy puede tardar varios minutos dependiendo de la congestión de la red.
 
@@ -159,6 +163,7 @@ votar=# SELECT * FROM eleccion;
 | `RECIBO_SIGNING_PRIVATE_KEY` | Private key generada |
 | `MERKLE_ROOT_STORE_ADDRESS` | Output del deploy |
 | `ELECTION_FACTORY_ADDRESS` | Output del deploy |
+| `RELAYER_PRIVATE_KEY` | Wallet generada. Paga el gas del voto en el relayer del backend (VOTAR-497). No se copia al frontend. |
 
 ### `front/.env`
 
@@ -166,7 +171,8 @@ votar=# SELECT * FROM eleccion;
 |----------|--------|
 | `VITE_RPC_URL` | URL de Alchemy |
 | `VITE_CHAIN_ID` | `11155111` (Sepolia) |
-| `VITE_VOTE_TRANSMITTER_PRIVATE_KEY` | Wallet generada |
 | `VITE_AUDIT_VIEW_ADDRESS` | Address de la wallet |
+
+> El cliente no recibe la clave que paga el gas (`VITE_PRIVATE_KEY` / `VITE_VOTE_TRANSMITTER_PRIVATE_KEY` se eliminan si existían).
 
 > Todas las demás variables que ya existan en los `.env` no son modificadas.
