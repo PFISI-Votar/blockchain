@@ -36,7 +36,7 @@
     "js-sha3": "^0.9.3",
     "js-yaml": "^5.4.2",
     "ts-node": "^10.9.2",
-    "typescript": "^5.5.0"
+    "typescript": "^7.0.2"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^5.1.0"
