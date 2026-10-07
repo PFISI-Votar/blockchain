@@ -28,11 +28,11 @@
     "grant:pauser-role": "hardhat run scripts/grant-pauser-role.ts"
   },
   "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@nomicfoundation/hardhat-toolbox": "^7.0.0",
     "@openzeppelin/merkle-tree": "^1.0.8",
     "@types/node": "^26.6.4",
     "dotenv": "^18.0.5",
-    "hardhat": "^2.22.0",
+    "hardhat": "^3.18.1",
     "js-sha3": "^0.9.3",
     "js-yaml": "^5.4.2",
     "ts-node": "^10.9.2",
