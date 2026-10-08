@@ -16,6 +16,18 @@ updates:
     open-pull-requests-limit: 5
     labels:
       - dependencies
+    # Los majors de estas dependencias requieren migrar la toolchain y no se
+    # resuelven con un bump: Hardhat 3 exige proyecto ESM + plugins nuevos
+    # (hardhat-toolbox 7 solo soporta Hardhat 3), y TypeScript 7 es
+    # incompatible con ts-node 10, del que depende Hardhat 2. Solo se ignoran
+    # los version updates major: los security updates siguen habilitados.
+    ignore:
+      - dependency-name: hardhat
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@nomicfoundation/hardhat-toolbox"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
